@@ -1,14 +1,3 @@
-const POPCOUNT = new Uint8Array(256);
-for (let index = 0; index < 256; index += 1) {
-  let value = index;
-  let count = 0;
-  while (value > 0) {
-    count += value & 1;
-    value >>= 1;
-  }
-  POPCOUNT[index] = count;
-}
-
 export function normalizeProfileImageUrl(source: string): string {
   const url = new URL(source);
   url.search = "";
@@ -17,18 +6,4 @@ export function normalizeProfileImageUrl(source: string): string {
     "_400x400$2",
   );
   return url.toString();
-}
-
-export function colorDistance(left: [number, number, number], right: [number, number, number]): number {
-  return Math.abs(left[0] - right[0]) + Math.abs(left[1] - right[1]) + Math.abs(left[2] - right[2]);
-}
-
-export function hammingDistance(left: string, right: string): number {
-  let total = 0;
-  for (let index = 0; index < left.length; index += 2) {
-    const leftByte = Number.parseInt(left.slice(index, index + 2), 16);
-    const rightByte = Number.parseInt(right.slice(index, index + 2), 16);
-    total += POPCOUNT[leftByte ^ rightByte];
-  }
-  return total;
 }
