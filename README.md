@@ -1,6 +1,6 @@
 # Milady Shrinkifier
 
-*Protecting your timeline from the egregore since 2026.*
+*protecting your timeline from the egregore since 2026*
 
 ## Why
 
