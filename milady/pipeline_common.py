@@ -461,7 +461,11 @@ def queue_items(items: list[ReviewItem], queue_name: str) -> list[ReviewItem]:
         )
 
     if queue_name == "heuristic_matches":
-        return sorted((item for item in items if item.heuristic_match), key=lambda item: item.seen_count, reverse=True)
+        return sorted(
+            (item for item in items if item.heuristic_match and item.label is None),
+            key=lambda item: item.seen_count,
+            reverse=True,
+        )
 
     if queue_name == "whitelisted":
         return sorted((item for item in items if item.whitelisted), key=lambda item: item.seen_count, reverse=True)
