@@ -570,7 +570,7 @@ def run_epoch(
     for batch_index, (inputs, labels, sample_weights) in enumerate(loader, start=1):
         inputs = inputs.to(device)
         labels = labels.to(device)
-        sample_weights = sample_weights.to(device)
+        sample_weights = sample_weights.to(device=device, dtype=torch.float32)
         optimizer.zero_grad(set_to_none=True)
         with autocast_context(device, amp_enabled):
             logits = model(inputs)
