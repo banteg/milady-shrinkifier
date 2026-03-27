@@ -3,10 +3,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 from datetime import UTC, datetime
 from pathlib import Path
 from time import perf_counter
 
+import numpy as np
 import torch
 import wandb
 from torch import nn
@@ -37,6 +39,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train a MobileNetV3-Small binary Milady classifier.")
     parser.add_argument("--epochs", type=int, default=15)
     parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--seed", type=int, default=1337)
+    parser.add_argument("--num-workers", type=int, default=default_num_workers())
+    parser.add_argument("--prefetch-factor", type=int, default=4)
     parser.add_argument("--log-every", type=int, default=25, help="Print a batch progress update every N training steps.")
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
@@ -66,12 +71,19 @@ def main() -> None:
     if not train_entries or not val_entries:
         raise SystemExit("Missing train/val split files. Run build_training_dataset.py first.")
 
+    seed_everything(args.seed)
     device = choose_device(args.cpu)
     model = create_model(pretrained=True).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
     criterion = build_loss(train_entries).to(device)
 
-    train_loader = DataLoader(AvatarDataset(train_entries, training=True), batch_size=args.batch_size, shuffle=True)
+    train_loader = DataLoader(
+        AvatarDataset(train_entries, training=True),
+        batch_size=args.batch_size,
+        shuffle=True,
+        generator=build_loader_generator(args.seed),
+        **dataloader_kwargs(args, device),
+    )
     run_dir = MODEL_RUN_ROOT / args.run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     cache_connection = connect_offline_cache_db()
@@ -192,6 +204,10 @@ def main() -> None:
             "mean": MODEL_MEAN,
             "std": MODEL_STD,
             "precisionFloor": args.precision_floor,
+            "seed": args.seed,
+            "numWorkers": max(0, args.num_workers),
+            "prefetchFactor": max(1, args.prefetch_factor) if args.num_workers > 0 else None,
+            "pinMemory": device.type == "cuda",
             "evaluationPolicy": {
                 "headline": HEADLINE_EVAL_POLICY,
                 "trainIncludesTrustedSynthetic": True,
@@ -272,6 +288,10 @@ def init_wandb(
         "device": device.type,
         "epochs": args.epochs,
         "batch_size": args.batch_size,
+        "seed": args.seed,
+        "num_workers": args.num_workers,
+        "prefetch_factor": args.prefetch_factor if args.num_workers > 0 else None,
+        "pin_memory": device.type == "cuda",
         "log_every": args.log_every,
         "learning_rate": args.learning_rate,
         "weight_decay": args.weight_decay,
@@ -321,6 +341,49 @@ def choose_device(force_cpu: bool) -> torch.device:
     if torch.backends.mps.is_available():
         return torch.device("mps")
     return torch.device("cpu")
+
+
+def default_num_workers() -> int:
+    cpu_count = os.cpu_count() or 1
+    return max(1, min(4, cpu_count // 2))
+
+
+def seed_everything(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    if hasattr(torch.backends, "cudnn"):
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+    torch.use_deterministic_algorithms(True, warn_only=True)
+
+
+def build_loader_generator(seed: int) -> torch.Generator:
+    generator = torch.Generator()
+    generator.manual_seed(seed)
+    return generator
+
+
+def worker_init_fn(worker_id: int) -> None:
+    worker_seed = torch.initial_seed() % (2**32)
+    random.seed(worker_seed)
+    np.random.seed(worker_seed)
+    torch.manual_seed(worker_seed)
+
+
+def dataloader_kwargs(args: argparse.Namespace, device: torch.device) -> dict[str, object]:
+    num_workers = max(0, args.num_workers)
+    kwargs: dict[str, object] = {
+        "num_workers": num_workers,
+        "pin_memory": device.type == "cuda",
+    }
+    if num_workers > 0:
+        kwargs["persistent_workers"] = True
+        kwargs["worker_init_fn"] = worker_init_fn
+        kwargs["prefetch_factor"] = max(1, args.prefetch_factor)
+    return kwargs
 
 
 def build_loss(train_entries: list) -> nn.Module:
@@ -416,12 +479,15 @@ def print_run_header(
     print(
         f"[setup] run_id={args.run_id} device={device.type} "
         f"epochs={args.epochs} batch_size={args.batch_size} lr={args.learning_rate:g} "
-        f"weight_decay={args.weight_decay:g} patience={args.patience} precision_floor={args.precision_floor:.4f}",
+        f"weight_decay={args.weight_decay:g} patience={args.patience} precision_floor={args.precision_floor:.4f} "
+        f"seed={args.seed}",
         flush=True,
     )
     print(
         f"[setup] splits train={len(train_entries)} val={len(val_entries)} test={len(test_entries)} "
-        f"train_milady={positives} train_not_milady={negatives}",
+        f"train_milady={positives} train_not_milady={negatives} "
+        f"num_workers={max(0, args.num_workers)} prefetch_factor={(max(1, args.prefetch_factor) if args.num_workers > 0 else 'n/a')} "
+        f"pin_memory={'cuda-only' if device.type == 'cuda' else 'off'}",
         flush=True,
     )
     print(f"[setup] artifacts={run_dir}", flush=True)
