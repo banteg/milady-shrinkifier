@@ -426,6 +426,7 @@ function App() {
       <main class="popup">
         <header class="header">
           <h1>Milady Shrinkifier</h1>
+          <p class="lede">protecting your timeline from the egregore since 2026</p>
         </header>
 
         <nav class="tabs" aria-label="Popup sections">
