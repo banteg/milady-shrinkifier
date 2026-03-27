@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import random
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 from time import perf_counter
@@ -42,6 +43,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=1337)
     parser.add_argument("--num-workers", type=int, default=default_num_workers())
     parser.add_argument("--prefetch-factor", type=int, default=4)
+    parser.add_argument("--amp", choices=("auto", "on", "off"), default="auto")
+    parser.add_argument("--compile", dest="compile_mode", choices=("auto", "on", "off"), default="auto")
     parser.add_argument("--log-every", type=int, default=25, help="Print a batch progress update every N training steps.")
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
@@ -73,9 +76,14 @@ def main() -> None:
 
     seed_everything(args.seed)
     device = choose_device(args.cpu)
+    amp_enabled = resolve_amp_enabled(args.amp, device)
     model = create_model(pretrained=True).to(device)
+    compile_enabled = resolve_compile_enabled(args.compile_mode, device)
+    if compile_enabled:
+        model = torch.compile(model)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
     criterion = build_loss(train_entries).to(device)
+    grad_scaler = torch.amp.GradScaler("cuda", enabled=amp_enabled and device.type == "cuda")
 
     train_loader = DataLoader(
         AvatarDataset(train_entries, training=True),
@@ -88,8 +96,8 @@ def main() -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
     cache_connection = connect_offline_cache_db()
     try:
-        print_run_header(args, device, train_entries, val_entries, test_entries, run_dir)
-        wandb_run = init_wandb(args, device, train_entries, val_entries, test_entries, run_dir)
+        print_run_header(args, device, train_entries, val_entries, test_entries, run_dir, amp_enabled, compile_enabled)
+        wandb_run = init_wandb(args, device, train_entries, val_entries, test_entries, run_dir, amp_enabled, compile_enabled)
 
         best_state: dict[str, torch.Tensor] | None = None
         best_threshold = 0.995
@@ -116,6 +124,8 @@ def main() -> None:
                 args.log_every,
                 wandb_run,
                 global_step,
+                amp_enabled,
+                grad_scaler,
             )
             val_probabilities, val_labels = evaluate(model, val_entries, device, args.batch_size, cache_connection)
             threshold, threshold_metrics = choose_threshold(val_probabilities, val_labels, args.precision_floor)
@@ -208,6 +218,8 @@ def main() -> None:
             "numWorkers": max(0, args.num_workers),
             "prefetchFactor": max(1, args.prefetch_factor) if args.num_workers > 0 else None,
             "pinMemory": device.type == "cuda",
+            "amp": amp_enabled,
+            "compile": compile_enabled,
             "evaluationPolicy": {
                 "headline": HEADLINE_EVAL_POLICY,
                 "trainIncludesTrustedSynthetic": True,
@@ -275,6 +287,8 @@ def init_wandb(
     val_entries: list,
     test_entries: list,
     run_dir: Path,
+    amp_enabled: bool,
+    compile_enabled: bool,
 ) -> wandb.sdk.wandb_run.Run | None:
     if args.no_wandb:
         print("[wandb] disabled via --no-wandb", flush=True)
@@ -292,6 +306,8 @@ def init_wandb(
         "num_workers": args.num_workers,
         "prefetch_factor": args.prefetch_factor if args.num_workers > 0 else None,
         "pin_memory": device.type == "cuda",
+        "amp": amp_enabled,
+        "compile": compile_enabled,
         "log_every": args.log_every,
         "learning_rate": args.learning_rate,
         "weight_decay": args.weight_decay,
@@ -386,6 +402,36 @@ def dataloader_kwargs(args: argparse.Namespace, device: torch.device) -> dict[st
     return kwargs
 
 
+def resolve_amp_enabled(mode: str, device: torch.device) -> bool:
+    if mode == "off":
+        return False
+    if mode == "auto":
+        return device.type == "cuda"
+    if device.type != "cuda":
+        raise SystemExit("--amp=on is only supported on CUDA in this trainer.")
+    return True
+
+
+def resolve_compile_enabled(mode: str, device: torch.device) -> bool:
+    if mode == "off":
+        return False
+    if not hasattr(torch, "compile"):
+        if mode == "on":
+            raise SystemExit("torch.compile is not available in this PyTorch build.")
+        return False
+    if mode == "auto":
+        return device.type == "cuda"
+    if device.type != "cuda":
+        raise SystemExit("--compile=on is only enabled for CUDA in this trainer.")
+    return True
+
+
+def autocast_context(device: torch.device, amp_enabled: bool):
+    if amp_enabled and device.type == "cuda":
+        return torch.autocast(device_type="cuda", dtype=torch.float16)
+    return nullcontext()
+
+
 def build_loss(train_entries: list) -> nn.Module:
     positives = sum(1 for entry in train_entries if entry.label == "milady")
     negatives = max(1, len(train_entries) - positives)
@@ -404,6 +450,8 @@ def run_epoch(
     log_every: int,
     wandb_run: wandb.sdk.wandb_run.Run | None,
     global_step_base: int,
+    amp_enabled: bool,
+    grad_scaler: torch.amp.GradScaler,
 ) -> tuple[float, int]:
     model.train()
     total_loss = 0.0
@@ -415,11 +463,17 @@ def run_epoch(
         labels = labels.to(device)
         sample_weights = sample_weights.to(device)
         optimizer.zero_grad(set_to_none=True)
-        logits = model(inputs)
-        loss_values = criterion(logits, labels)
-        loss = (loss_values * sample_weights).sum() / sample_weights.sum().clamp_min(1e-8)
-        loss.backward()
-        optimizer.step()
+        with autocast_context(device, amp_enabled):
+            logits = model(inputs)
+            loss_values = criterion(logits, labels)
+            loss = (loss_values * sample_weights).sum() / sample_weights.sum().clamp_min(1e-8)
+        if grad_scaler.is_enabled():
+            grad_scaler.scale(loss).backward()
+            grad_scaler.step(optimizer)
+            grad_scaler.update()
+        else:
+            loss.backward()
+            optimizer.step()
         total_loss += float(loss.item()) * inputs.size(0)
         total_items += inputs.size(0)
         if should_log_batch(batch_index, total_batches, log_every):
@@ -473,6 +527,8 @@ def print_run_header(
     val_entries: list,
     test_entries: list,
     run_dir: Path,
+    amp_enabled: bool,
+    compile_enabled: bool,
 ) -> None:
     positives = sum(1 for entry in train_entries if entry.label == "milady")
     negatives = len(train_entries) - positives
@@ -480,7 +536,7 @@ def print_run_header(
         f"[setup] run_id={args.run_id} device={device.type} "
         f"epochs={args.epochs} batch_size={args.batch_size} lr={args.learning_rate:g} "
         f"weight_decay={args.weight_decay:g} patience={args.patience} precision_floor={args.precision_floor:.4f} "
-        f"seed={args.seed}",
+        f"seed={args.seed} amp={amp_enabled} compile={compile_enabled}",
         flush=True,
     )
     print(
