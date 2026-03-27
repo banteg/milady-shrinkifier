@@ -6,7 +6,7 @@
 pnpm run build
 pnpm run typecheck
 pnpm run test
-pnpm run check:pfp -- <avatar-url>
+uv run python scripts/check_pfp_url.py <avatar-url>
 ```
 
 ## Chrome Debugging
@@ -58,8 +58,7 @@ pnpm run download:images:aria2
 Generate the legacy local model assets:
 
 ```bash
-pnpm run generate:model
-pnpm run prepare:assets
+uv run python scripts/build_prototype_model.py
 ```
 
 ## Training Pipeline
@@ -69,14 +68,14 @@ The extension exports collected avatars as JSON manifests. The offline pipeline 
 Typical loop:
 
 ```bash
-pnpm run ingest:avatars -- cache/milady-shrinkifier-avatars-<timestamp>.json
-pnpm run download:avatars
-pnpm run download:avatars -- --retry-failed
-pnpm run label:heuristic
-pnpm run review:avatars
-pnpm run build:dataset
-pnpm run train:classifier
-pnpm run score:classifier -- --run-id <run-id>
-pnpm run export:classifier -- --run-id <run-id>
+uv run python scripts/ingest_avatar_exports.py cache/milady-shrinkifier-avatars-<timestamp>.json
+uv run python scripts/download_avatar_catalog.py
+uv run python scripts/download_avatar_catalog.py --retry-failed
+uv run python scripts/label_heuristic_matches.py
+uv run python scripts/review_avatars.py
+uv run python scripts/build_training_dataset.py
+uv run python scripts/train_classifier.py
+uv run python scripts/score_avatar_catalog.py --run-id <run-id>
+uv run python scripts/export_classifier_onnx.py --run-id <run-id>
 pnpm run build
 ```
