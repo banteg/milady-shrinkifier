@@ -26,8 +26,8 @@ type TabId = "filter" | "stats" | "accounts" | "dataset";
 const TAB_LABELS: Array<{ id: TabId; label: string }> = [
   { id: "filter", label: "Config" },
   { id: "stats", label: "Stats" },
-  { id: "accounts", label: "Accounts" },
-  { id: "dataset", label: "Dataset" },
+  { id: "accounts", label: "Collection" },
+  { id: "dataset", label: "Data" },
 ];
 
 const MODE_OPTIONS: Array<{ value: FilterMode; label: string; note: string }> = [
