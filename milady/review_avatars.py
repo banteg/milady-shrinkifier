@@ -38,6 +38,11 @@ class BatchLabelPayload(BaseModel):
     items: list[BatchLabelItem]
 
 
+LabelPayload.model_rebuild()
+BatchLabelItem.model_rebuild()
+BatchLabelPayload.model_rebuild()
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a local avatar review app for labeling Milady classifier data.")
     parser.add_argument("--host", default="127.0.0.1", help="Bind host.")
