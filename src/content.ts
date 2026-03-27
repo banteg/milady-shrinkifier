@@ -210,7 +210,9 @@ async function processTweet(tweet: HTMLElement): Promise<void> {
     clearEffects(tweet);
     delete tweet.dataset.miladyShrinkifier;
     tweet.dataset.miladyShrinkifierState = "miss";
-    delete tweet.dataset.miladyShrinkifierDebug;
+    if (result.debugLabel) {
+      tweet.dataset.miladyShrinkifierDebug = result.debugLabel;
+    }
     applyMode(tweet, normalizedUrl);
   } catch (error) {
     console.error("Milady post processing failed", error);
