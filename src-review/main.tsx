@@ -461,12 +461,13 @@ function App() {
   }
 
   const labelMutation = createMutation(() => ({
-    mutationFn: (payload: { sha256: string; label: ReviewLabel }) => postJson<{ ok: true }>("/api/label", payload),
+    mutationFn: (payload: { sha256: string; label: ReviewLabel }) =>
+      postJson<{ ok: true; changed: boolean }>("/api/label", payload),
   }));
 
   const batchMutation = createMutation(() => ({
     mutationFn: (payload: { items: Array<{ sha256: string; label: ReviewLabel }> }) =>
-      postJson<{ ok: true }>("/api/batch-label", payload),
+      postJson<{ ok: true; batchId: string; count: number }>("/api/batch-label", payload),
   }));
 
   const undoMutation = createMutation(() => ({
@@ -478,9 +479,12 @@ function App() {
     if (!item) {
       return;
     }
-    await labelMutation.mutateAsync({ sha256: item.sha256, label });
+    const wasQueueItem = selectedSha() === null;
+    const payload = await labelMutation.mutateAsync({ sha256: item.sha256, label });
     setSelectedSha(null);
-    setIndex((value) => value + 1);
+    if (wasQueueItem && payload.changed) {
+      setIndex((value) => value + 1);
+    }
     await invalidateAll();
   }
 
@@ -510,17 +514,24 @@ function App() {
     if (items.length === 0) {
       return;
     }
-    await batchMutation.mutateAsync({
+    const payload = await batchMutation.mutateAsync({
       items: items.map((entry) => ({ sha256: entry.item.sha256, label: entry.assignedLabel })),
     });
+    if (payload.count === 0) {
+      await batchQuery.refetch();
+      return;
+    }
     setSelectedSha(null);
     await invalidateAll();
   }
 
   async function handleUndo() {
+    const wasQueueItem = selectedSha() === null;
     const payload = await undoMutation.mutateAsync();
     setSelectedSha(payload.undoneSha256 ?? null);
-    setIndex((value) => Math.max(0, value - 1));
+    if (wasQueueItem) {
+      setIndex((value) => Math.max(0, value - 1));
+    }
     await invalidateAll();
   }
 

@@ -284,6 +284,9 @@ def label_avatar(payload: LabelPayload) -> JSONResponse:
         if not existing:
             raise HTTPException(status_code=404, detail=f"Unknown avatar sha256: {payload.sha256}")
 
+        if existing["label"] == payload.label and existing["review_notes"] == payload.note:
+            return JSONResponse({"ok": True, "changed": False})
+
         connection.execute(
             """
             INSERT INTO label_events (
@@ -324,7 +327,7 @@ def label_avatar(payload: LabelPayload) -> JSONResponse:
         connection.commit()
 
     STATE.refresh()
-    return JSONResponse({"ok": True})
+    return JSONResponse({"ok": True, "changed": True})
 
 
 @app.post("/api/batch-label")
@@ -333,6 +336,7 @@ def batch_label(payload: BatchLabelPayload) -> JSONResponse:
         raise HTTPException(status_code=400, detail="Batch is empty")
 
     batch_id = str(uuid.uuid4())
+    changed_count = 0
     with closing(connect_db()) as connection:
         for item in payload.items:
             if item.label not in LABELS:
@@ -347,6 +351,9 @@ def batch_label(payload: BatchLabelPayload) -> JSONResponse:
             ).fetchone()
             if not existing:
                 raise HTTPException(status_code=404, detail=f"Unknown avatar sha256: {item.sha256}")
+
+            if existing["label"] == item.label:
+                continue
 
             connection.execute(
                 """
@@ -384,11 +391,13 @@ def batch_label(payload: BatchLabelPayload) -> JSONResponse:
                 """,
                 (item.label, item.sha256),
             )
+            changed_count += 1
 
         connection.commit()
 
-    STATE.refresh()
-    return JSONResponse({"ok": True, "batchId": batch_id, "count": len(payload.items)})
+    if changed_count > 0:
+        STATE.refresh()
+    return JSONResponse({"ok": True, "batchId": batch_id, "count": changed_count})
 
 
 @app.post("/api/undo")
