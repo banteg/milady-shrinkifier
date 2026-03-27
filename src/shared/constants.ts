@@ -1,4 +1,9 @@
-import type { DetectionStats, ExtensionSettings, MatchedAccountMap } from "./types";
+import type {
+  CollectedAvatarMap,
+  DetectionStats,
+  ExtensionSettings,
+  MatchedAccountMap,
+} from "./types";
 
 export const DEFAULT_SETTINGS: ExtensionSettings = {
   mode: "off",
@@ -17,6 +22,7 @@ export const DEFAULT_STATS: DetectionStats = {
 };
 
 export const DEFAULT_MATCHED_ACCOUNTS: MatchedAccountMap = {};
+export const DEFAULT_COLLECTED_AVATARS: CollectedAvatarMap = {};
 
 export const HASH_MATCH_THRESHOLD = 8;
 export const HASH_ONNX_THRESHOLD = 18;

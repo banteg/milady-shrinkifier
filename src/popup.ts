@@ -1,13 +1,22 @@
 import { DEFAULT_SETTINGS } from "./shared/constants";
 import {
+  loadCollectedAvatars,
   loadMatchedAccounts,
   loadSettings,
   loadStats,
+  resetCollectedAvatars,
   resetMatchedAccounts,
   resetStats,
   saveSettings,
 } from "./shared/storage";
-import type { DetectionStats, FilterMode, MatchedAccount, MatchedAccountMap } from "./shared/types";
+import type {
+  CollectedAvatar,
+  CollectedAvatarMap,
+  DetectionStats,
+  FilterMode,
+  MatchedAccount,
+  MatchedAccountMap,
+} from "./shared/types";
 
 const styles = document.createElement("style");
 styles.textContent = `
@@ -103,6 +112,27 @@ styles.textContent = `
     cursor: pointer;
   }
 
+  .section-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .section-actions button {
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: rgba(247, 241, 232, 0.7);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  .section-actions button:disabled {
+    color: rgba(247, 241, 232, 0.3);
+    cursor: default;
+  }
+
   .stats-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -180,6 +210,7 @@ document.head.append(styles);
 
 let currentSettings = DEFAULT_SETTINGS;
 let currentMatchedAccounts: MatchedAccountMap = {};
+let currentCollectedAvatars: CollectedAvatarMap = {};
 
 void init();
 
@@ -187,24 +218,31 @@ async function init(): Promise<void> {
   const form = document.getElementById("mode-form");
   const resetButton = document.getElementById("reset-stats");
   const accountsList = document.getElementById("accounts-list");
+  const exportAvatarsButton = document.getElementById("export-avatars");
+  const resetAvatarsButton = document.getElementById("reset-avatars");
   if (
     !(form instanceof HTMLFormElement) ||
     !(resetButton instanceof HTMLButtonElement) ||
-    !(accountsList instanceof HTMLDivElement)
+    !(accountsList instanceof HTMLDivElement) ||
+    !(exportAvatarsButton instanceof HTMLButtonElement) ||
+    !(resetAvatarsButton instanceof HTMLButtonElement)
   ) {
     return;
   }
 
-  const [settings, stats, matchedAccounts] = await Promise.all([
+  const [settings, stats, matchedAccounts, collectedAvatars] = await Promise.all([
     loadSettings(),
     loadStats(),
     loadMatchedAccounts(),
+    loadCollectedAvatars(),
   ]);
   currentSettings = settings;
   currentMatchedAccounts = matchedAccounts;
+  currentCollectedAvatars = collectedAvatars;
   setModeSelection(form, currentSettings.mode);
   renderStats(stats);
   renderMatchedAccounts(currentMatchedAccounts, currentSettings.whitelistHandles);
+  renderCollectedAvatarSummary(currentCollectedAvatars);
 
   form.addEventListener("change", async () => {
     const mode = getSelectedMode(form);
@@ -220,6 +258,16 @@ async function init(): Promise<void> {
     renderStats(await loadStats());
     currentMatchedAccounts = await loadMatchedAccounts();
     renderMatchedAccounts(currentMatchedAccounts, currentSettings.whitelistHandles);
+  });
+
+  resetAvatarsButton.addEventListener("click", async () => {
+    await resetCollectedAvatars();
+    currentCollectedAvatars = await loadCollectedAvatars();
+    renderCollectedAvatarSummary(currentCollectedAvatars);
+  });
+
+  exportAvatarsButton.addEventListener("click", () => {
+    exportCollectedAvatars(currentCollectedAvatars, currentSettings.whitelistHandles);
   });
 
   accountsList.addEventListener("click", async (event) => {
@@ -260,6 +308,10 @@ async function init(): Promise<void> {
       if (changes.matchedAccounts) {
         currentMatchedAccounts = normalizeMatchedAccounts(changes.matchedAccounts.newValue);
         renderMatchedAccounts(currentMatchedAccounts, currentSettings.whitelistHandles);
+      }
+      if (changes.collectedAvatars) {
+        currentCollectedAvatars = normalizeCollectedAvatars(changes.collectedAvatars.newValue);
+        renderCollectedAvatarSummary(currentCollectedAvatars);
       }
     }
 
@@ -365,8 +417,33 @@ function renderMatchedAccounts(
   }
 }
 
+function renderCollectedAvatarSummary(collectedAvatars: CollectedAvatarMap): void {
+  const avatars = Object.values(collectedAvatars);
+  writeCollectionStat("uniqueAvatars", formatNumber(avatars.length));
+  writeCollectionStat(
+    "totalSightings",
+    formatNumber(avatars.reduce((total, avatar) => total + avatar.seenCount, 0)),
+  );
+
+  const exportButton = document.getElementById("export-avatars");
+  const resetButton = document.getElementById("reset-avatars");
+  if (exportButton instanceof HTMLButtonElement) {
+    exportButton.disabled = avatars.length === 0;
+  }
+  if (resetButton instanceof HTMLButtonElement) {
+    resetButton.disabled = avatars.length === 0;
+  }
+}
+
 function writeStat(name: keyof DetectionStats, value: string): void {
   const node = document.querySelector<HTMLElement>(`[data-stat="${name}"]`);
+  if (node) {
+    node.textContent = value;
+  }
+}
+
+function writeCollectionStat(name: "uniqueAvatars" | "totalSightings", value: string): void {
+  const node = document.querySelector<HTMLElement>(`[data-collection-stat="${name}"]`);
   if (node) {
     node.textContent = value;
   }
@@ -446,11 +523,125 @@ function normalizeMatchedAccounts(value: unknown): MatchedAccountMap {
   return normalized;
 }
 
+function normalizeCollectedAvatars(value: unknown): CollectedAvatarMap {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+
+  const normalized: CollectedAvatarMap = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+
+    const candidate = entry as Partial<CollectedAvatar>;
+    const normalizedUrl =
+      typeof candidate.normalizedUrl === "string" && candidate.normalizedUrl.length > 0
+        ? candidate.normalizedUrl
+        : key;
+    if (!normalizedUrl) {
+      continue;
+    }
+
+    normalized[normalizedUrl] = {
+      normalizedUrl,
+      originalUrl:
+        typeof candidate.originalUrl === "string" && candidate.originalUrl.length > 0
+          ? candidate.originalUrl
+          : normalizedUrl,
+      handles: normalizeStringArray(candidate.handles, true),
+      displayNames: normalizeStringArray(candidate.displayNames, false),
+      seenCount: readNumber(candidate.seenCount),
+      firstSeenAt:
+        typeof candidate.firstSeenAt === "string" ? candidate.firstSeenAt : new Date(0).toISOString(),
+      lastSeenAt:
+        typeof candidate.lastSeenAt === "string" ? candidate.lastSeenAt : new Date(0).toISOString(),
+      exampleProfileUrl:
+        typeof candidate.exampleProfileUrl === "string" ? candidate.exampleProfileUrl : null,
+      exampleTweetUrl: typeof candidate.exampleTweetUrl === "string" ? candidate.exampleTweetUrl : null,
+      heuristicMatch:
+        typeof candidate.heuristicMatch === "boolean" ? candidate.heuristicMatch : null,
+      heuristicSource:
+        candidate.heuristicSource === "phash" || candidate.heuristicSource === "onnx"
+          ? candidate.heuristicSource
+          : null,
+      heuristicScore:
+        typeof candidate.heuristicScore === "number" && Number.isFinite(candidate.heuristicScore)
+          ? candidate.heuristicScore
+          : null,
+      heuristicTokenId:
+        typeof candidate.heuristicTokenId === "number" && Number.isFinite(candidate.heuristicTokenId)
+          ? candidate.heuristicTokenId
+          : null,
+      whitelisted: candidate.whitelisted === true,
+    };
+  }
+
+  return normalized;
+}
+
+function normalizeStringArray(value: unknown, normalizeHandles: boolean): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return Array.from(
+    new Set(
+      value
+        .filter((entry): entry is string => typeof entry === "string")
+        .map((entry) => normalizeHandles ? entry.trim().replace(/^@+/, "").toLowerCase() : entry.trim())
+        .filter((entry) => entry.length > 0),
+    ),
+  ).sort((left, right) => left.localeCompare(right));
+}
+
+function exportCollectedAvatars(
+  collectedAvatars: CollectedAvatarMap,
+  whitelistHandles: string[],
+): void {
+  const avatars = Object.values(collectedAvatars).sort(compareCollectedAvatars);
+  if (avatars.length === 0) {
+    return;
+  }
+
+  const payload = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    avatarCount: avatars.length,
+    totalSightings: avatars.reduce((total, avatar) => total + avatar.seenCount, 0),
+    whitelistHandles,
+    avatars,
+  };
+
+  const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `milady-shrinkifier-avatars-${timestampForFilename(new Date())}.json`;
+  anchor.click();
+  window.setTimeout(() => {
+    URL.revokeObjectURL(url);
+  }, 0);
+}
+
 function compareAccounts(left: MatchedAccount, right: MatchedAccount): number {
   if (right.postsMatched !== left.postsMatched) {
     return right.postsMatched - left.postsMatched;
   }
   return left.handle.localeCompare(right.handle);
+}
+
+function compareCollectedAvatars(left: CollectedAvatar, right: CollectedAvatar): number {
+  if (right.seenCount !== left.seenCount) {
+    return right.seenCount - left.seenCount;
+  }
+  return left.normalizedUrl.localeCompare(right.normalizedUrl);
+}
+
+function timestampForFilename(value: Date): string {
+  return value.toISOString().replace(/[:.]/g, "-");
 }
 
 function emptyStats(): DetectionStats {

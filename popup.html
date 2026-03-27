@@ -40,6 +40,20 @@
         <p id="accounts-empty" class="footnote">No matched accounts yet.</p>
         <div id="accounts-list" class="accounts-list"></div>
       </section>
+      <section class="accounts" aria-labelledby="collection-heading">
+        <div class="stats-header">
+          <h2 id="collection-heading">Collected Avatars</h2>
+          <div class="section-actions">
+            <button id="export-avatars" type="button">Export</button>
+            <button id="reset-avatars" type="button">Reset</button>
+          </div>
+        </div>
+        <p class="section-note">Exports normalized avatar URLs and metadata for offline download and labeling.</p>
+        <dl class="stats-grid">
+          <div><dt>Unique avatars</dt><dd data-collection-stat="uniqueAvatars">0</dd></div>
+          <div><dt>Total sightings</dt><dd data-collection-stat="totalSightings">0</dd></div>
+        </dl>
+      </section>
       <p class="footnote">Detection runs locally from a generated Milady Maker reference set.</p>
     </main>
   </body>

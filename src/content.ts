@@ -17,13 +17,16 @@ import {
   normalizeProfileImageUrl,
 } from "./shared/image-core";
 import {
+  loadCollectedAvatars,
   loadMatchedAccounts,
   loadSettings,
   loadStats,
+  saveCollectedAvatars,
   saveMatchedAccounts,
   saveStats,
 } from "./shared/storage";
 import type {
+  CollectedAvatarMap,
   DetectionStats,
   DetectionResult,
   ExtensionSettings,
@@ -50,16 +53,18 @@ let scanScheduled = false;
 let delayedScanTimer: number | null = null;
 let stats: DetectionStats | null = null;
 let matchedAccounts: MatchedAccountMap | null = null;
+let collectedAvatars: CollectedAvatarMap | null = null;
 let localStateWriteScheduled = false;
 
 void boot();
 
 async function boot(): Promise<void> {
   injectStyles();
-  [settings, stats, matchedAccounts] = await Promise.all([
+  [settings, stats, matchedAccounts, collectedAvatars] = await Promise.all([
     loadSettings(),
     loadStats(),
     loadMatchedAccounts(),
+    loadCollectedAvatars(),
   ]);
   observeStorage();
   const observer = new MutationObserver(() => {
@@ -123,14 +128,6 @@ async function processTweet(tweet: HTMLElement): Promise<void> {
       return;
     }
 
-    if (author && settings.whitelistHandles.includes(author.handle)) {
-      revealed.delete(tweet);
-      clearEffects(tweet);
-      delete tweet.dataset.miladyShrinkifier;
-      delete tweet.dataset.miladyShrinkifierState;
-      return;
-    }
-
     const normalizedUrl = normalizeProfileImageUrl(avatar.currentSrc || avatar.src);
     if (revealed.get(tweet) && revealed.get(tweet) !== normalizedUrl) {
       revealed.delete(tweet);
@@ -141,11 +138,35 @@ async function processTweet(tweet: HTMLElement): Promise<void> {
       return;
     }
 
+    processed.set(tweet, normalizedUrl);
+
+    if (author && settings.whitelistHandles.includes(author.handle)) {
+      recordCollectedAvatar({
+        normalizedUrl,
+        originalUrl: avatar.currentSrc || avatar.src,
+        author,
+        whitelisted: true,
+        exampleTweetUrl: findTweetUrl(tweet),
+      });
+      revealed.delete(tweet);
+      clearEffects(tweet);
+      delete tweet.dataset.miladyShrinkifier;
+      delete tweet.dataset.miladyShrinkifierState;
+      return;
+    }
+
     tweet.dataset.miladyShrinkifierState = "miss";
     applyMode(tweet, normalizedUrl);
-    processed.set(tweet, normalizedUrl);
     incrementStat("tweetsScanned");
     const result = await detectAvatar(avatar, normalizedUrl);
+    recordCollectedAvatar({
+      normalizedUrl,
+      originalUrl: avatar.currentSrc || avatar.src,
+      author,
+      whitelisted: false,
+      exampleTweetUrl: findTweetUrl(tweet),
+      result,
+    });
     if (result.matched) {
       tweet.dataset.miladyShrinkifier = result.source ?? "match";
       tweet.dataset.miladyShrinkifierState = "match";
@@ -475,6 +496,10 @@ function observeStorage(): void {
     if (area === "local" && changes.matchedAccounts) {
       matchedAccounts = normalizeMatchedAccounts(changes.matchedAccounts.newValue);
     }
+
+    if (area === "local" && changes.collectedAvatars) {
+      collectedAvatars = normalizeCollectedAvatars(changes.collectedAvatars.newValue);
+    }
   });
 }
 
@@ -587,17 +612,58 @@ function recordMatchedAccount(handle: string, displayName: string | null): void 
   scheduleLocalStateWrite();
 }
 
+function recordCollectedAvatar(input: {
+  normalizedUrl: string;
+  originalUrl: string;
+  author: { handle: string; displayName: string | null } | null;
+  whitelisted: boolean;
+  exampleTweetUrl: string | null;
+  result?: DetectionResult;
+}): void {
+  if (!collectedAvatars) {
+    return;
+  }
+
+  const existing = collectedAvatars[input.normalizedUrl];
+  const now = new Date().toISOString();
+  collectedAvatars[input.normalizedUrl] = {
+    normalizedUrl: input.normalizedUrl,
+    originalUrl: input.originalUrl || existing?.originalUrl || input.normalizedUrl,
+    handles: mergeUniqueStrings(existing?.handles, input.author?.handle ?? null, true),
+    displayNames: mergeUniqueStrings(existing?.displayNames, input.author?.displayName ?? null, false),
+    seenCount: (existing?.seenCount ?? 0) + 1,
+    firstSeenAt: existing?.firstSeenAt ?? now,
+    lastSeenAt: now,
+    exampleProfileUrl:
+      existing?.exampleProfileUrl ?? (input.author ? toAbsoluteUrl(`/${input.author.handle}`) : null),
+    exampleTweetUrl: existing?.exampleTweetUrl ?? input.exampleTweetUrl,
+    heuristicMatch:
+      typeof input.result?.matched === "boolean" ? input.result.matched : existing?.heuristicMatch ?? null,
+    heuristicSource: input.result?.source ?? existing?.heuristicSource ?? null,
+    heuristicScore:
+      typeof input.result?.score === "number" ? input.result.score : existing?.heuristicScore ?? null,
+    heuristicTokenId:
+      typeof input.result?.tokenId === "number" ? input.result.tokenId : existing?.heuristicTokenId ?? null,
+    whitelisted: input.whitelisted || existing?.whitelisted === true,
+  };
+  scheduleLocalStateWrite();
+}
+
 function scheduleLocalStateWrite(): void {
-  if (localStateWriteScheduled || !stats || !matchedAccounts) {
+  if (localStateWriteScheduled || !stats || !matchedAccounts || !collectedAvatars) {
     return;
   }
   localStateWriteScheduled = true;
   window.setTimeout(async () => {
     localStateWriteScheduled = false;
-    if (!stats || !matchedAccounts) {
+    if (!stats || !matchedAccounts || !collectedAvatars) {
       return;
     }
-    await Promise.all([saveStats(stats), saveMatchedAccounts(matchedAccounts)]);
+    await Promise.all([
+      saveStats(stats),
+      saveMatchedAccounts(matchedAccounts),
+      saveCollectedAvatars(collectedAvatars),
+    ]);
   }, 250);
 }
 
@@ -681,8 +747,112 @@ function normalizeMatchedAccounts(value: unknown): MatchedAccountMap {
   return normalized;
 }
 
+function normalizeCollectedAvatars(value: unknown): CollectedAvatarMap {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+
+  const normalized: CollectedAvatarMap = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+
+    const candidate = entry as Record<string, unknown>;
+    const normalizedUrl =
+      typeof candidate.normalizedUrl === "string" && candidate.normalizedUrl.length > 0
+        ? candidate.normalizedUrl
+        : key;
+    if (!normalizedUrl) {
+      continue;
+    }
+
+    normalized[normalizedUrl] = {
+      normalizedUrl,
+      originalUrl:
+        typeof candidate.originalUrl === "string" && candidate.originalUrl.length > 0
+          ? candidate.originalUrl
+          : normalizedUrl,
+      handles: normalizeStringArray(candidate.handles, true),
+      displayNames: normalizeStringArray(candidate.displayNames, false),
+      seenCount: readNumber(candidate.seenCount),
+      firstSeenAt:
+        typeof candidate.firstSeenAt === "string" ? candidate.firstSeenAt : new Date(0).toISOString(),
+      lastSeenAt:
+        typeof candidate.lastSeenAt === "string" ? candidate.lastSeenAt : new Date(0).toISOString(),
+      exampleProfileUrl:
+        typeof candidate.exampleProfileUrl === "string" ? candidate.exampleProfileUrl : null,
+      exampleTweetUrl: typeof candidate.exampleTweetUrl === "string" ? candidate.exampleTweetUrl : null,
+      heuristicMatch:
+        typeof candidate.heuristicMatch === "boolean" ? candidate.heuristicMatch : null,
+      heuristicSource:
+        candidate.heuristicSource === "phash" || candidate.heuristicSource === "onnx"
+          ? candidate.heuristicSource
+          : null,
+      heuristicScore:
+        typeof candidate.heuristicScore === "number" && Number.isFinite(candidate.heuristicScore)
+          ? candidate.heuristicScore
+          : null,
+      heuristicTokenId:
+        typeof candidate.heuristicTokenId === "number" && Number.isFinite(candidate.heuristicTokenId)
+          ? candidate.heuristicTokenId
+          : null,
+      whitelisted: candidate.whitelisted === true,
+    };
+  }
+
+  return normalized;
+}
+
+function normalizeStringArray(value: unknown, normalizeHandles: boolean): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return Array.from(
+    new Set(
+      value
+        .filter((entry): entry is string => typeof entry === "string")
+        .map((entry) => normalizeHandles ? normalizeHandle(entry) : entry.trim())
+        .filter((entry) => entry.length > 0),
+    ),
+  ).sort((left, right) => left.localeCompare(right));
+}
+
+function mergeUniqueStrings(
+  existing: string[] | undefined,
+  incoming: string | null,
+  normalizeHandles: boolean,
+): string[] {
+  const values = new Set(existing ?? []);
+  const normalized = incoming
+    ? (normalizeHandles ? normalizeHandle(incoming) : incoming.trim())
+    : "";
+  if (normalized) {
+    values.add(normalized);
+  }
+  return Array.from(values).sort((left, right) => left.localeCompare(right));
+}
+
 function normalizeHandle(value: string | null | undefined): string {
   return (value ?? "").trim().replace(/^\/+/, "").replace(/^@+/, "").toLowerCase();
+}
+
+function findTweetUrl(tweet: HTMLElement): string | null {
+  const link = tweet.querySelector<HTMLAnchorElement>('a[href*="/status/"]');
+  return toAbsoluteUrl(link?.getAttribute("href"));
+}
+
+function toAbsoluteUrl(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    return new URL(value, window.location.origin).toString();
+  } catch {
+    return null;
+  }
 }
 
 function extractDisplayName(userName: HTMLElement): string | null {

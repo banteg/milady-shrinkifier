@@ -25,6 +25,25 @@ export interface MatchedAccount {
 
 export type MatchedAccountMap = Record<string, MatchedAccount>;
 
+export interface CollectedAvatar {
+  normalizedUrl: string;
+  originalUrl: string;
+  handles: string[];
+  displayNames: string[];
+  seenCount: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  exampleProfileUrl: string | null;
+  exampleTweetUrl: string | null;
+  heuristicMatch: boolean | null;
+  heuristicSource: "phash" | "onnx" | null;
+  heuristicScore: number | null;
+  heuristicTokenId: number | null;
+  whitelisted: boolean;
+}
+
+export type CollectedAvatarMap = Record<string, CollectedAvatar>;
+
 export interface HashEntry {
   tokenId: number;
   variant: string;

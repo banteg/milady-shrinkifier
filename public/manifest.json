@@ -3,7 +3,7 @@
   "name": "Milady Shrinkifier",
   "version": "0.1.0",
   "description": "Hide, shrink, or fade X/Twitter posts from Milady Maker PFPS.",
-  "permissions": ["storage"],
+  "permissions": ["storage", "unlimitedStorage"],
   "host_permissions": ["https://x.com/*", "https://twitter.com/*"],
   "action": {
     "default_popup": "popup.html"
