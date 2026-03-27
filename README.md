@@ -1,6 +1,10 @@
 # Milady Shrinkifier
 
-Browser extension that detects Milady and Milady-derivative avatars on X/Twitter and lets you control how those posts render in your feed.
+*Protecting your timeline from the egregore since 2026.*
+
+## Why
+
+Some people find that a significant percentage of their timeline consists of accounts using aesthetically identical chibi avatars posting aesthetically identical content. This extension addresses that.
 
 ## What It Does
 
@@ -39,10 +43,6 @@ To run it locally:
    pnpm run build
    ```
 4. Load `dist/` as an unpacked extension in Chrome.
-
-## Why
-
-Some people find that a significant percentage of their timeline consists of accounts using aesthetically identical anime avatars posting aesthetically identical content. This extension addresses that.
 
 ## Privacy
 
