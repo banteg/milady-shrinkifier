@@ -51,14 +51,6 @@ COLLECTIONS: tuple[DerivativeCollection, ...] = (
         target_count=1_000,
         metadata_url_template="ipfs://bafybeigd7557iwardhnwg5kbmg2s7tmuxqkstjeoixu7wunooiywbb3jqq/{token_id}",
     ),
-    DerivativeCollection(
-        slug="bitch",
-        name="Milady, that B.I.T.C.H",
-        contract="0x8A45Fb65311aC8434AaD5b8a93D1EbA6Ac4e813b",
-        total_supply=333,
-        target_count=1_000,
-        asset_page_template="https://opensea.io/item/ethereum/0x8A45Fb65311aC8434AaD5b8a93D1EbA6Ac4e813b/{token_id}",
-    ),
 )
 
 

@@ -6,8 +6,11 @@ from pathlib import Path
 
 from PIL import Image
 
+from .download_derivative_samples import COLLECTIONS as DERIVATIVE_COLLECTIONS
 from .mobilenet_common import DatasetEntry, dataset_entries_to_jsonl, deterministic_split_ids
 from .pipeline_common import DERIVATIVE_MANIFEST_PATH, OFFICIAL_IMAGE_ROOT, SPLIT_ROOT, connect_db, read_json_file, resolve_repo_path
+
+ENABLED_DERIVATIVE_SLUGS = frozenset(collection.slug for collection in DERIVATIVE_COLLECTIONS)
 
 
 def parse_args() -> argparse.Namespace:
@@ -124,6 +127,8 @@ def build_derivative_entries(split_ratios: tuple[float, float, float]) -> list[D
         slug = collection.get("slug")
         samples = collection.get("samples")
         if not isinstance(slug, str) or not isinstance(samples, list):
+            continue
+        if slug not in ENABLED_DERIVATIVE_SLUGS:
             continue
         for sample in samples:
             if not isinstance(sample, dict):
