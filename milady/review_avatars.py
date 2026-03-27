@@ -163,6 +163,22 @@ def get_labeled_grid(
     )
 
 
+@app.get("/api/queue-grid")
+def get_queue_grid(
+    queue: str = Query("unlabeled"),
+    limit: int = Query(240, ge=1, le=1000),
+) -> JSONResponse:
+    connection = connect_db()
+    items = queue_items(load_review_items(connection), queue)
+    return JSONResponse(
+        {
+            "queue": queue,
+            "total": len(items),
+            "items": [item.to_dict() for item in items[:limit]],
+        }
+    )
+
+
 @app.post("/api/label")
 def label_avatar(payload: LabelPayload) -> JSONResponse:
     if payload.label not in LABELS:
@@ -713,14 +729,20 @@ INDEX_HTML = """<!doctype html>
       </section>
       <section class="panel full-width">
         <div class="grid-toolbar">
-          <h2>Labeled grid</h2>
-          <label>
-            Filter
-            <select id="labeled-filter"></select>
-          </label>
+          <h2>Browse grid</h2>
+          <div class="grid-toolbar">
+            <label>
+              Source
+              <select id="grid-source"></select>
+            </label>
+            <label>
+              Filter
+              <select id="grid-filter"></select>
+            </label>
+          </div>
         </div>
         <div id="labeled-grid" class="labeled-grid"></div>
-        <p id="labeled-grid-empty" class="grid-empty" hidden>No labeled images for this filter.</p>
+        <p id="labeled-grid-empty" class="grid-empty" hidden>No images for this view.</p>
       </section>
     </div>
     <script>
@@ -734,7 +756,8 @@ INDEX_HTML = """<!doctype html>
       const undo = document.getElementById("undo");
       const historyGrid = document.getElementById("history-grid");
       const historyEmpty = document.getElementById("history-empty");
-      const labeledFilter = document.getElementById("labeled-filter");
+      const gridSource = document.getElementById("grid-source");
+      const gridFilter = document.getElementById("grid-filter");
       const labeledGrid = document.getElementById("labeled-grid");
       const labeledGridEmpty = document.getElementById("labeled-grid-empty");
       const batchGrid = document.getElementById("batch-grid");
@@ -761,6 +784,10 @@ INDEX_HTML = """<!doctype html>
         high_score_unlabeled: "High-score unlabeled",
         high_score_false_positive: "High-score false positives",
       };
+      const gridSourceLabels = {
+        queue: "Current queue",
+        labeled: "Labeled set",
+      };
       const batchTileKeys = [7, 8, 9, 4, 5, 6, 1, 2, 3];
       const numpadIndexMap = {
         Numpad7: 0,
@@ -776,7 +803,8 @@ INDEX_HTML = """<!doctype html>
 
       async function loadSummary() {
         const currentQueue = queueSelect.value || "unlabeled";
-        const currentLabeledFilter = labeledFilter.value || "all";
+        const currentGridSource = gridSource.value || "queue";
+        const currentGridFilter = gridFilter.value || "all";
         const response = await fetch("/api/summary");
         const payload = await response.json();
         summaryNode.textContent = `${payload.totalImages} images, ${payload.unlabeled} unlabeled`;
@@ -784,16 +812,31 @@ INDEX_HTML = """<!doctype html>
           .map(([queue, count]) => `<option value="${queue}">${queueLabels[queue] || queue} (${count})</option>`)
           .join("");
         queueSelect.value = payload.queueCounts[currentQueue] != null ? currentQueue : "unlabeled";
-        labeledFilter.innerHTML = [
+        gridSource.innerHTML = Object.entries(gridSourceLabels)
+          .map(([value, label]) => `<option value="${value}">${label}</option>`)
+          .join("");
+        gridSource.value = ["queue", "labeled"].includes(currentGridSource) ? currentGridSource : "queue";
+        renderGridFilterOptions(payload.queueCounts, currentGridFilter);
+        undo.disabled = !payload.canUndo;
+      }
+
+      function renderGridFilterOptions(queueCounts, currentGridFilter) {
+        if ((gridSource.value || "queue") === "queue") {
+          gridFilter.innerHTML = Object.entries(queueCounts)
+            .map(([queue, count]) => `<option value="${queue}">${queueLabels[queue] || queue} (${count})</option>`)
+            .join("");
+          gridFilter.value = queueCounts[currentGridFilter] != null ? currentGridFilter : (queueSelect.value || "unlabeled");
+          return;
+        }
+        gridFilter.innerHTML = [
           ["all", "All"],
           ["milady", "Milady"],
           ["not_milady", "Not Milady"],
           ["unclear", "Unclear"],
         ].map(([value, label]) => `<option value="${value}">${label}</option>`).join("");
-        labeledFilter.value = ["all", "milady", "not_milady", "unclear"].includes(currentLabeledFilter)
-          ? currentLabeledFilter
+        gridFilter.value = ["all", "milady", "not_milady", "unclear"].includes(currentGridFilter)
+          ? currentGridFilter
           : "all";
-        undo.disabled = !payload.canUndo;
       }
 
       function setActiveView(nextView) {
@@ -909,7 +952,7 @@ INDEX_HTML = """<!doctype html>
         selectedSha = null;
         await loadSummary();
         await loadHistory();
-        await loadLabeledGrid();
+        await loadBrowseGrid();
         await loadBatch();
         await loadItem();
       }
@@ -943,9 +986,12 @@ INDEX_HTML = """<!doctype html>
         }
       }
 
-      async function loadLabeledGrid() {
-        const filter = labeledFilter.value || "all";
-        const response = await fetch(`/api/labeled-grid?filter_name=${encodeURIComponent(filter)}`);
+      async function loadBrowseGrid() {
+        const source = gridSource.value || "queue";
+        const filter = gridFilter.value || (source === "queue" ? (queueSelect.value || "unlabeled") : "all");
+        const response = source === "queue"
+          ? await fetch(`/api/queue-grid?queue=${encodeURIComponent(filter)}`)
+          : await fetch(`/api/labeled-grid?filter_name=${encodeURIComponent(filter)}`);
         const payload = await response.json();
         labeledGrid.innerHTML = "";
         labeledGridEmpty.hidden = payload.items.length > 0;
@@ -955,10 +1001,10 @@ INDEX_HTML = """<!doctype html>
           button.className = "labeled-thumb";
           button.dataset.sha256 = item.sha256;
           button.dataset.selected = String(selectedSha === item.sha256);
-          button.innerHTML = `<img src="/api/image/${item.sha256}" alt="${item.sha256}" /><span>${item.label}</span>`;
+          button.innerHTML = `<img src="/api/image/${item.sha256}" alt="${item.sha256}" /><span>${item.label || "unlabeled"}</span>`;
           button.addEventListener("click", async () => {
             selectedSha = item.sha256;
-            await loadLabeledGrid();
+            await loadBrowseGrid();
             await loadItem();
           });
           labeledGrid.append(button);
@@ -1033,7 +1079,7 @@ INDEX_HTML = """<!doctype html>
         index += 1;
         await loadSummary();
         await loadHistory();
-        await loadLabeledGrid();
+        await loadBrowseGrid();
         await loadItem();
       }
 
@@ -1047,7 +1093,7 @@ INDEX_HTML = """<!doctype html>
         index = Math.max(0, index - 1);
         await loadSummary();
         await loadHistory();
-        await loadLabeledGrid();
+        await loadBrowseGrid();
         await loadBatch();
         await loadItem();
       }
@@ -1055,9 +1101,19 @@ INDEX_HTML = """<!doctype html>
       queueSelect.addEventListener("change", async () => {
         selectedSha = null;
         index = 0;
+        if ((gridSource.value || "queue") === "queue") {
+          gridFilter.value = queueSelect.value || "unlabeled";
+          await loadBrowseGrid();
+        }
         await loadItem();
       });
-      labeledFilter.addEventListener("change", loadLabeledGrid);
+      gridSource.addEventListener("change", async () => {
+        const response = await fetch("/api/summary");
+        const payload = await response.json();
+        renderGridFilterOptions(payload.queueCounts, gridFilter.value || "all");
+        await loadBrowseGrid();
+      });
+      gridFilter.addEventListener("change", loadBrowseGrid);
       batchRefresh.addEventListener("click", loadBatch);
       batchCommit.addEventListener("click", commitBatch);
       tabIndividual.addEventListener("click", async () => {
@@ -1106,7 +1162,7 @@ INDEX_HTML = """<!doctype html>
       loadSummary().then(async () => {
         setActiveView("individual");
         await loadHistory();
-        await loadLabeledGrid();
+        await loadBrowseGrid();
         await loadBatch();
         await loadItem();
       });
