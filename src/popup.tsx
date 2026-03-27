@@ -327,6 +327,14 @@ function App() {
   const filteredAccounts = createMemo(() =>
     sortedAccounts().filter((account) => !settings().whitelistHandles.includes(account.handle)),
   );
+  const matchRateLabel = createMemo(() => {
+    const checked = stats().avatarsChecked;
+    if (checked <= 0) {
+      return "0%";
+    }
+    const rate = (stats().postsMatched / checked) * 100;
+    return `${rate.toFixed(rate >= 10 ? 1 : 2)}%`;
+  });
   const totalAvatarSightings = createMemo(() =>
     Object.values(collectedAvatars()).reduce((total, avatar) => total + avatar.seenCount, 0),
   );
@@ -478,11 +486,9 @@ function App() {
               </div>
             </div>
             <dl class="stats-grid">
-              <div><dt>Tweets scanned</dt><dd>{formatNumber(stats().tweetsScanned)}</dd></div>
-              <div><dt>Avatars checked</dt><dd>{formatNumber(stats().avatarsChecked)}</dd></div>
-              <div><dt>Cache hits</dt><dd>{formatNumber(stats().cacheHits)}</dd></div>
               <div><dt>Posts matched</dt><dd>{formatNumber(stats().postsMatched)}</dd></div>
-              <div><dt>Model hits</dt><dd>{formatNumber(stats().modelMatches)}</dd></div>
+              <div><dt>Match rate</dt><dd>{matchRateLabel()}</dd></div>
+              <div><dt>Whitelisted</dt><dd>{formatNumber(whitelistedAccounts().length)}</dd></div>
               <div><dt>Errors</dt><dd>{formatNumber(stats().errors)}</dd></div>
               <div><dt>Last hit</dt><dd>{lastHitLabel()}</dd></div>
             </dl>
