@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import threading
 import uuid
 from pathlib import Path
 from typing import Any
@@ -51,6 +52,8 @@ def parse_args() -> argparse.Namespace:
 
 
 app = FastAPI(title="Milady Shrinkifier Review")
+IMAGE_PATH_CACHE: dict[str, str] | None = None
+IMAGE_PATH_CACHE_LOCK = threading.Lock()
 
 
 @app.get("/")
@@ -381,14 +384,40 @@ def undo_last_label() -> JSONResponse:
 
 @app.get("/api/image/{sha256}")
 def get_image(sha256: str) -> FileResponse:
-    connection = connect_db()
-    row = connection.execute("SELECT local_path FROM images WHERE sha256 = ?", (sha256,)).fetchone()
-    if not row:
+    path = image_path_for_sha(sha256)
+    if path is None:
         raise HTTPException(status_code=404, detail="Image not found")
-    path = resolve_repo_path(str(row["local_path"]))
     if not path.exists():
         raise HTTPException(status_code=404, detail="Image file missing on disk")
     return FileResponse(path)
+
+
+def image_path_for_sha(sha256: str) -> Path | None:
+    global IMAGE_PATH_CACHE
+
+    if IMAGE_PATH_CACHE is None:
+        with IMAGE_PATH_CACHE_LOCK:
+            if IMAGE_PATH_CACHE is None:
+                connection = connect_db()
+                rows = connection.execute("SELECT sha256, local_path FROM images").fetchall()
+                IMAGE_PATH_CACHE = {
+                    str(row["sha256"]): str(resolve_repo_path(str(row["local_path"])))
+                    for row in rows
+                }
+
+    cached_path = IMAGE_PATH_CACHE.get(sha256) if IMAGE_PATH_CACHE is not None else None
+    if cached_path is not None:
+        return Path(cached_path)
+
+    connection = connect_db()
+    row = connection.execute("SELECT local_path FROM images WHERE sha256 = ?", (sha256,)).fetchone()
+    if not row:
+        return None
+    resolved = resolve_repo_path(str(row["local_path"]))
+    with IMAGE_PATH_CACHE_LOCK:
+        if IMAGE_PATH_CACHE is not None:
+            IMAGE_PATH_CACHE[sha256] = str(resolved)
+    return resolved
 
 
 INDEX_HTML = """<!doctype html>
