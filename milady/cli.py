@@ -15,7 +15,6 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "score": ("milady.score_avatar_catalog", "Score the local catalog with a trained classifier."),
     "export-onnx": ("milady.export_classifier_onnx", "Export a trained classifier to ONNX for the extension runtime."),
     "check-pfp": ("milady.check_pfp_url", "Score a single profile image URL."),
-    "build-prototype-model": ("milady.build_prototype_model", "Build the legacy prototype model artifact."),
 }
 
 

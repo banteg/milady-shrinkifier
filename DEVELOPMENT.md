@@ -46,21 +46,6 @@ pnpm run debug:extension:extension-profile
 pnpm run debug:extension:seed-extension-profile
 ```
 
-## Asset Preparation
-
-Download the Milady image corpus:
-
-```bash
-pnpm run download:images
-pnpm run download:images:aria2
-```
-
-Generate the legacy local model assets:
-
-```bash
-uv run milady build-prototype-model
-```
-
 ## Training Pipeline
 
 The extension exports collected avatars as JSON manifests. The offline pipeline ingests those exports into a local SQLite catalog under `cache/`, downloads avatar images, supports manual labeling, then trains and exports a MobileNetV3-Small classifier back into the extension runtime.

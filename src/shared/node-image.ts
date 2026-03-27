@@ -15,17 +15,6 @@ export async function computeNodeImageFeatures(
   variant: CropVariant = "center",
 ): Promise<RuntimeImageFeatures> {
   const position = variant === "top" ? "north" : "centre";
-  const modelRaw = await sharp(buffer)
-    .ensureAlpha()
-    .resize(32, 32, {
-      fit: "cover",
-      position,
-      kernel: "lanczos3",
-    })
-    .grayscale()
-    .raw()
-    .toBuffer();
-
   const classifierRaw = await sharp(buffer)
     .ensureAlpha()
     .resize(CLASSIFIER_MODEL_INPUT_SIZE, CLASSIFIER_MODEL_INPUT_SIZE, {
@@ -38,7 +27,6 @@ export async function computeNodeImageFeatures(
     .toBuffer();
 
   return {
-    legacyFeatures: Array.from(modelRaw, (value) => value / 255),
     modelTensor: computeClassifierTensor(classifierRaw),
     modelShape: [1, CLASSIFIER_MODEL_CHANNELS, CLASSIFIER_MODEL_INPUT_SIZE, CLASSIFIER_MODEL_INPUT_SIZE],
   };
