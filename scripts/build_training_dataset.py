@@ -7,7 +7,7 @@ from pathlib import Path
 from PIL import Image
 
 from mobilenet_common import DatasetEntry, dataset_entries_to_jsonl, deterministic_split_ids
-from pipeline_common import OFFICIAL_IMAGE_ROOT, SPLIT_ROOT, connect_db
+from pipeline_common import OFFICIAL_IMAGE_ROOT, SPLIT_ROOT, connect_db, resolve_repo_path
 
 
 def parse_args() -> argparse.Namespace:
@@ -57,13 +57,13 @@ def main() -> None:
     exported_entries = [
         DatasetEntry(
             sample_id=f"export:{row['sha256']}",
-            path=Path(str(row["local_path"])),
+            path=resolve_repo_path(str(row["local_path"])),
             label=str(row["label"]),
             source="export",
             split=exported_assignments[str(row["sha256"])],
         )
         for row in exported_rows
-        if Path(str(row["local_path"])).exists()
+        if resolve_repo_path(str(row["local_path"])).exists()
     ]
 
     for row in exported_rows:

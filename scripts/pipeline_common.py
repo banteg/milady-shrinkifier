@@ -12,15 +12,16 @@ from typing import Any
 
 from PIL import Image
 
-CACHE_ROOT = Path("cache")
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+CACHE_ROOT = PROJECT_ROOT / "cache"
 EXPORT_ROOT = CACHE_ROOT / "exports" / "raw"
 AVATAR_ROOT = CACHE_ROOT / "avatars" / "files"
 DATASET_ROOT = CACHE_ROOT / "dataset"
 SPLIT_ROOT = DATASET_ROOT / "splits"
 MODEL_RUN_ROOT = CACHE_ROOT / "models" / "mobilenet_v3_small"
 CATALOG_PATH = DATASET_ROOT / "avatar_catalog.sqlite"
-PUBLIC_MODEL_PATH = Path("public/models/milady-mobilenetv3-small.onnx")
-PUBLIC_METADATA_PATH = Path("public/generated/milady-mobilenetv3-small.meta.json")
+PUBLIC_MODEL_PATH = PROJECT_ROOT / "public" / "models" / "milady-mobilenetv3-small.onnx"
+PUBLIC_METADATA_PATH = PROJECT_ROOT / "public" / "generated" / "milady-mobilenetv3-small.meta.json"
 OFFICIAL_IMAGE_ROOT = CACHE_ROOT / "milady-maker"
 REVIEW_QUEUES = (
     "unlabeled",
@@ -222,6 +223,13 @@ def read_json_file(path: Path) -> dict[str, Any]:
 def write_json_file(path: Path, payload: dict[str, Any] | list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True))
+
+
+def resolve_repo_path(path: str | Path) -> Path:
+    candidate = Path(path)
+    if candidate.is_absolute():
+        return candidate
+    return PROJECT_ROOT / candidate
 
 
 def parse_json_list(value: str | None) -> list[str]:

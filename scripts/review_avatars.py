@@ -19,6 +19,7 @@ from pipeline_common import (
     labeled_grid_items,
     load_review_items,
     queue_items,
+    resolve_repo_path,
 )
 
 
@@ -363,7 +364,7 @@ def get_image(sha256: str) -> FileResponse:
     row = connection.execute("SELECT local_path FROM images WHERE sha256 = ?", (sha256,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Image not found")
-    path = Path(str(row["local_path"]))
+    path = resolve_repo_path(str(row["local_path"]))
     if not path.exists():
         raise HTTPException(status_code=404, detail="Image file missing on disk")
     return FileResponse(path)

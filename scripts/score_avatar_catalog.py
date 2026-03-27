@@ -7,7 +7,7 @@ from pathlib import Path
 import torch
 
 from mobilenet_common import create_model, load_image_for_inference, score_logits_to_probabilities
-from pipeline_common import MODEL_RUN_ROOT, connect_db, now_iso
+from pipeline_common import MODEL_RUN_ROOT, connect_db, now_iso, resolve_repo_path
 
 
 def parse_args() -> argparse.Namespace:
@@ -53,7 +53,7 @@ def main() -> None:
     created_at = now_iso()
     scored = 0
     for row in rows:
-        path = Path(str(row["local_path"]))
+        path = resolve_repo_path(str(row["local_path"]))
         if not path.exists():
             continue
         probability = infer_probability(model, path, device)
