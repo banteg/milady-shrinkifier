@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-import runpy
+import importlib
 import sys
 
 
@@ -41,10 +41,14 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     module_name, _ = COMMANDS[namespace.command]
+    module = importlib.import_module(module_name)
+    entrypoint = getattr(module, "main", None)
+    if not callable(entrypoint):
+        raise SystemExit(f"{module_name} does not expose a callable main()")
 
     previous_argv = sys.argv
     try:
         sys.argv = [f"milady {namespace.command}", *namespace.args]
-        runpy.run_module(module_name, run_name="__main__")
+        entrypoint()
     finally:
         sys.argv = previous_argv
