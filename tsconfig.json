@@ -15,5 +15,5 @@
     "skipLibCheck": true,
     "types": ["chrome", "node", "vitest/globals"]
   },
-  "include": ["src", "scripts", "tests", "vite.config.ts"]
+  "include": ["src", "src-review", "scripts", "tests", "vite.config.ts", "vite.review.config.ts"]
 }

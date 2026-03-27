@@ -5,3 +5,4 @@ cache
 .playwright-chrome-profile
 .cdp-chrome-profile
 wandb
+milady/review_static

@@ -6,6 +6,7 @@
   "scripts": {
     "build": "pnpm run build:app && pnpm run build:worker && pnpm run build:content",
     "build:app": "vite build",
+    "build:review": "vite build --config vite.review.config.ts",
     "build:worker": "esbuild src/worker.ts --bundle --format=iife --platform=browser --target=es2022 --sourcemap --outfile=dist/worker.js",
     "build:content": "esbuild src/content.ts --bundle --format=iife --platform=browser --target=es2022 --sourcemap --outfile=dist/content.js",
     "dev": "vite build --watch",
@@ -23,6 +24,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@tanstack/solid-query": "^5.95.2",
     "onnxruntime-web": "^1.24.3",
     "solid-js": "^1.9.12"
   },

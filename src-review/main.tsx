@@ -1,0 +1,790 @@
+import "./styles.css";
+
+import { QueryClient, QueryClientProvider, createMutation, createQuery, useQueryClient } from "@tanstack/solid-query";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
+import { render } from "solid-js/web";
+
+type ReviewLabel = "milady" | "not_milady" | "unclear";
+type QueueName =
+  | "unlabeled"
+  | "heuristic_matches"
+  | "heuristic_reviewed"
+  | "whitelisted"
+  | "high_seen_count"
+  | "notification_group"
+  | "high_score_unlabeled"
+  | "high_score_false_positive";
+type GridSource = "queue" | "labeled";
+type LabeledGridFilter = "all" | ReviewLabel;
+
+interface ReviewItem {
+  sha256: string;
+  label: ReviewLabel | null;
+  localPath: string;
+  byteSize: number | null;
+  width: number | null;
+  height: number | null;
+  handles: string[];
+  displayNames: string[];
+  sourceSurfaces: string[];
+  seenCount: number;
+  heuristicMatch: boolean;
+  heuristicSource: string | null;
+  heuristicScore: number | null;
+  heuristicTokenId: number | null;
+  whitelisted: boolean;
+  maxModelScore: number | null;
+  latestModelPredictedLabel: ReviewLabel | null;
+  latestModelRunId: string | null;
+  disagreementFlags: string[];
+  labeledAt: string | null;
+  exampleProfileUrl: string | null;
+  exampleNotificationUrl: string | null;
+  exampleTweetUrl: string | null;
+  lastSeenAt: string | null;
+  imageUrlCount: number;
+}
+
+interface SummaryPayload {
+  catalogPath: string;
+  totalImages: number;
+  queueCounts: Record<QueueName, number>;
+  labelCounts: Record<ReviewLabel, number>;
+  unlabeled: number;
+  canUndo: boolean;
+}
+
+interface QueuePayload {
+  queue: QueueName;
+  index: number;
+  total: number;
+  item: ReviewItem | null;
+}
+
+interface BatchPayload {
+  queue: QueueName;
+  total: number;
+  items: ReviewItem[];
+}
+
+interface ItemPayload {
+  item: ReviewItem;
+}
+
+interface HistoryEntry {
+  eventId: number;
+  sha256: string;
+  createdAt: string;
+  newLabel: ReviewLabel;
+  previousLabel: ReviewLabel | null;
+  item: ReviewItem | null;
+}
+
+interface HistoryPayload {
+  history: HistoryEntry[];
+}
+
+interface GridPayload {
+  items: ReviewItem[];
+  total: number;
+}
+
+interface BatchAssignment {
+  item: ReviewItem;
+  assignedLabel: ReviewLabel;
+}
+
+const queueLabels: Record<QueueName, string> = {
+  unlabeled: "Unlabeled",
+  heuristic_matches: "Heuristic review",
+  heuristic_reviewed: "Heuristic labeled",
+  whitelisted: "Whitelisted",
+  high_seen_count: "High seen count",
+  notification_group: "Notification group",
+  high_score_unlabeled: "High-score unlabeled",
+  high_score_false_positive: "High-score false positives",
+};
+
+const labeledGridLabels: Record<LabeledGridFilter, string> = {
+  all: "All",
+  milady: "Milady",
+  not_milady: "Not Milady",
+  unclear: "Unclear",
+};
+
+const labelDisplay: Record<ReviewLabel, string> = {
+  milady: "Milady",
+  not_milady: "Not Milady",
+  unclear: "Unclear",
+};
+
+const batchTileKeys = [7, 8, 9, 4, 5, 6, 1, 2, 3] as const;
+const numpadIndexMap: Record<string, number> = {
+  Numpad7: 0,
+  Numpad8: 1,
+  Numpad9: 2,
+  Numpad4: 3,
+  Numpad5: 4,
+  Numpad6: 5,
+  Numpad1: 6,
+  Numpad2: 7,
+  Numpad3: 8,
+};
+const batchLabelOrder: ReviewLabel[] = ["not_milady", "milady", "unclear"];
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+      staleTime: 5_000,
+    },
+  },
+});
+
+async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(input, init);
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `${response.status} ${response.statusText}`);
+  }
+  return (await response.json()) as T;
+}
+
+async function postJson<T>(input: string, body?: unknown): Promise<T> {
+  return fetchJson<T>(input, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
+function imageUrl(sha256: string): string {
+  return `/api/image/${encodeURIComponent(sha256)}`;
+}
+
+function formatScore(value: number | null): string {
+  if (value == null || Number.isNaN(value)) {
+    return "n/a";
+  }
+  return value.toFixed(3);
+}
+
+function shortLabel(label: ReviewLabel): string {
+  if (label === "milady") return "M";
+  if (label === "unclear") return "U";
+  return "N";
+}
+
+function initialBatchLabel(item: ReviewItem, queue: QueueName): ReviewLabel {
+  if (item.label) {
+    return item.label;
+  }
+  if (queue === "heuristic_matches" && item.heuristicMatch) {
+    return "milady";
+  }
+  return "not_milady";
+}
+
+function renderStatusPills(item: ReviewItem) {
+  const pills = [
+    {
+      text: `heuristic ${item.heuristicMatch ? "milady" : "not_milady"}`,
+      tone: item.heuristicMatch ? "warn" : "good",
+    },
+  ];
+  if (item.latestModelPredictedLabel) {
+    pills.push({
+      text: `model ${item.latestModelPredictedLabel} ${formatScore(item.maxModelScore)}`,
+      tone: item.latestModelPredictedLabel === "milady" ? "warn" : "good",
+    });
+  } else {
+    pills.push({ text: "model unscored", tone: "" });
+  }
+  if (item.label) {
+    pills.push({
+      text: `human ${item.label}`,
+      tone: item.label === "not_milady" ? "good" : "warn",
+    });
+  }
+  for (const flag of item.disagreementFlags) {
+    pills.push({ text: flag.replaceAll("_", " "), tone: "bad" });
+  }
+  return pills;
+}
+
+function metadataRows(item: ReviewItem): Array<{ label: string; value: string | { href: string; text: string } }> {
+  return [
+    { label: "sha256", value: item.sha256 },
+    { label: "label", value: item.label ?? "unlabeled" },
+    { label: "labeled at", value: item.labeledAt ?? "n/a" },
+    { label: "handles", value: item.handles.join(", ") || "none" },
+    { label: "display names", value: item.displayNames.join(", ") || "none" },
+    { label: "seen count", value: String(item.seenCount) },
+    { label: "source surfaces", value: item.sourceSurfaces.join(", ") || "none" },
+    {
+      label: "heuristic",
+      value: item.heuristicMatch
+        ? `${item.heuristicSource ?? "match"} (${item.heuristicScore ?? "n/a"})`
+        : "no",
+    },
+    {
+      label: "model",
+      value: item.latestModelPredictedLabel
+        ? `${item.latestModelPredictedLabel} (${formatScore(item.maxModelScore)})`
+        : "unscored",
+    },
+    { label: "model run", value: item.latestModelRunId ?? "n/a" },
+    { label: "whitelisted", value: item.whitelisted ? "yes" : "no" },
+    {
+      label: "profile",
+      value: item.exampleProfileUrl ? { href: item.exampleProfileUrl, text: item.exampleProfileUrl } : "n/a",
+    },
+    {
+      label: "tweet",
+      value: item.exampleTweetUrl ? { href: item.exampleTweetUrl, text: item.exampleTweetUrl } : "n/a",
+    },
+    {
+      label: "notification",
+      value: item.exampleNotificationUrl ? { href: item.exampleNotificationUrl, text: item.exampleNotificationUrl } : "n/a",
+    },
+  ];
+}
+
+function App() {
+  const queryClient = useQueryClient();
+  const [queue, setQueue] = createSignal<QueueName>("unlabeled");
+  const [index, setIndex] = createSignal(0);
+  const [selectedSha, setSelectedSha] = createSignal<string | null>(null);
+  const [activeView, setActiveView] = createSignal<"individual" | "batch">("individual");
+  const [gridSource, setGridSource] = createSignal<GridSource>("queue");
+  const [gridFilter, setGridFilter] = createSignal<string>("unlabeled");
+  const [selectedBatchIndex, setSelectedBatchIndex] = createSignal(0);
+  const [batchAssignments, setBatchAssignments] = createSignal<BatchAssignment[]>([]);
+
+  const summaryQuery = createQuery(() => ({
+    queryKey: ["review", "summary"],
+    queryFn: () => fetchJson<SummaryPayload>("/api/summary"),
+  }));
+
+  createEffect(() => {
+    const summary = summaryQuery.data;
+    if (!summary) {
+      return;
+    }
+
+    if (!(queue() in summary.queueCounts)) {
+      setQueue("unlabeled");
+      setIndex(0);
+    }
+
+    if (gridSource() === "queue") {
+      if (!(gridFilter() in summary.queueCounts)) {
+        setGridFilter(queue());
+      }
+    } else if (!(gridFilter() in labeledGridLabels)) {
+      setGridFilter("all");
+    }
+  });
+
+  const selectedItemQuery = createQuery(() => ({
+    queryKey: ["review", "item", selectedSha()],
+    enabled: selectedSha() !== null,
+    queryFn: () => fetchJson<ItemPayload>(`/api/item/${encodeURIComponent(selectedSha() ?? "")}`),
+  }));
+
+  const queueQuery = createQuery(() => ({
+    queryKey: ["review", "queue", queue(), index()],
+    enabled: selectedSha() === null,
+    queryFn: () => fetchJson<QueuePayload>(`/api/queue?queue=${encodeURIComponent(queue())}&index=${index()}`),
+  }));
+
+  createEffect(() => {
+    const payload = queueQuery.data;
+    if (selectedSha() !== null || !payload) {
+      return;
+    }
+    if (payload.index !== index()) {
+      setIndex(payload.index);
+    }
+  });
+
+  const currentItem = createMemo<ReviewItem | null>(() => {
+    if (selectedSha()) {
+      return selectedItemQuery.data?.item ?? null;
+    }
+    return queueQuery.data?.item ?? null;
+  });
+
+  const currentHeading = createMemo(() => {
+    if (selectedSha()) {
+      return `selected ${selectedSha()!.slice(0, 8)}`;
+    }
+    const payload = queueQuery.data;
+    if (!payload?.item) {
+      return "Queue empty";
+    }
+    return `${queueLabels[payload.queue]} ${payload.index + 1}/${payload.total}`;
+  });
+
+  const historyQuery = createQuery(() => ({
+    queryKey: ["review", "history"],
+    queryFn: () => fetchJson<HistoryPayload>("/api/history"),
+  }));
+
+  const batchQuery = createQuery(() => ({
+    queryKey: ["review", "batch", queue()],
+    enabled: activeView() === "batch",
+    queryFn: () => fetchJson<BatchPayload>(`/api/batch?queue=${encodeURIComponent(queue())}&limit=9`),
+  }));
+
+  createEffect(() => {
+    const payload = batchQuery.data;
+    if (!payload) {
+      return;
+    }
+    setSelectedBatchIndex(0);
+    setBatchAssignments(
+      payload.items.map((item) => ({
+        item,
+        assignedLabel: initialBatchLabel(item, payload.queue),
+      })),
+    );
+  });
+
+  const gridQuery = createQuery(() => ({
+    queryKey: ["review", "grid", gridSource(), gridFilter()],
+    queryFn: () =>
+      gridSource() === "queue"
+        ? fetchJson<GridPayload>(`/api/queue-grid?queue=${encodeURIComponent(gridFilter())}`)
+        : fetchJson<GridPayload>(`/api/labeled-grid?filter_name=${encodeURIComponent(gridFilter())}`),
+  }));
+
+  const groupedGridItems = createMemo(() => {
+    const items = gridQuery.data?.items ?? [];
+    const order: Array<ReviewLabel | "unlabeled"> = ["unlabeled", "milady", "not_milady", "unclear"];
+    const labels: Record<ReviewLabel | "unlabeled", string> = {
+      unlabeled: "Unlabeled",
+      milady: "Milady",
+      not_milady: "Not Milady",
+      unclear: "Unclear",
+    };
+    return order
+      .map((label) => {
+        const groupedItems = items.filter((item) => (item.label ?? "unlabeled") === label);
+        return {
+          key: label,
+          title: `${labels[label]} (${groupedItems.length})`,
+          items: groupedItems,
+        };
+      })
+      .filter((group) => group.items.length > 0);
+  });
+
+  async function invalidateAll() {
+    await queryClient.invalidateQueries({ queryKey: ["review"] });
+  }
+
+  const labelMutation = createMutation(() => ({
+    mutationFn: (payload: { sha256: string; label: ReviewLabel }) => postJson<{ ok: true }>("/api/label", payload),
+  }));
+
+  const batchMutation = createMutation(() => ({
+    mutationFn: (payload: { items: Array<{ sha256: string; label: ReviewLabel }> }) =>
+      postJson<{ ok: true }>("/api/batch-label", payload),
+  }));
+
+  const undoMutation = createMutation(() => ({
+    mutationFn: () => postJson<{ undoneSha256: string | null }>("/api/undo"),
+  }));
+
+  async function handleLabel(label: ReviewLabel) {
+    const item = currentItem();
+    if (!item) {
+      return;
+    }
+    await labelMutation.mutateAsync({ sha256: item.sha256, label });
+    setSelectedSha(null);
+    setIndex((value) => value + 1);
+    await invalidateAll();
+  }
+
+  async function handleSkip() {
+    setSelectedSha(null);
+    setIndex((value) => value + 1);
+  }
+
+  function cycleBatchLabel(tileIndex: number) {
+    setBatchAssignments((current) => {
+      const next = current.slice();
+      const entry = next[tileIndex];
+      if (!entry) {
+        return current;
+      }
+      const currentIndex = batchLabelOrder.indexOf(entry.assignedLabel);
+      next[tileIndex] = {
+        ...entry,
+        assignedLabel: batchLabelOrder[(currentIndex + 1) % batchLabelOrder.length],
+      };
+      return next;
+    });
+  }
+
+  async function handleCommitBatch() {
+    const items = batchAssignments();
+    if (items.length === 0) {
+      return;
+    }
+    await batchMutation.mutateAsync({
+      items: items.map((entry) => ({ sha256: entry.item.sha256, label: entry.assignedLabel })),
+    });
+    setSelectedSha(null);
+    await invalidateAll();
+  }
+
+  async function handleUndo() {
+    const payload = await undoMutation.mutateAsync();
+    setSelectedSha(payload.undoneSha256 ?? null);
+    setIndex((value) => Math.max(0, value - 1));
+    await invalidateAll();
+  }
+
+  function selectGridItem(sha256: string) {
+    setSelectedSha(sha256);
+    setActiveView("individual");
+  }
+
+  onMount(() => {
+    const handleKeyDown = async (event: KeyboardEvent) => {
+      const target = event.target;
+      if (target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      if (event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        await handleUndo();
+        return;
+      }
+
+      if (activeView() === "individual") {
+        if (event.key === "1") {
+          event.preventDefault();
+          await handleLabel("milady");
+        }
+        if (event.key === "2") {
+          event.preventDefault();
+          await handleLabel("not_milady");
+        }
+        if (event.key === "3") {
+          event.preventDefault();
+          await handleLabel("unclear");
+        }
+        if (event.key.toLowerCase() === "x") {
+          event.preventDefault();
+          await handleSkip();
+        }
+        return;
+      }
+
+      const numpadIndex = numpadIndexMap[event.code];
+      if (numpadIndex != null) {
+        event.preventDefault();
+        setSelectedBatchIndex(numpadIndex);
+        cycleBatchLabel(numpadIndex);
+      }
+      if (event.key === "Enter" || event.code === "NumpadEnter") {
+        event.preventDefault();
+        await handleCommitBatch();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    onCleanup(() => window.removeEventListener("keydown", handleKeyDown));
+  });
+
+  return (
+    <div class="app">
+      <div class="layout">
+        <aside class="panel sidebar-panel">
+          <h2>Queues</h2>
+          <label>
+            <span>Queue</span>
+            <select
+              value={queue()}
+              onInput={(event) => {
+                setQueue(event.currentTarget.value as QueueName);
+                setSelectedSha(null);
+                setIndex(0);
+                if (gridSource() === "queue") {
+                  setGridFilter(event.currentTarget.value);
+                }
+              }}
+            >
+              <Show when={summaryQuery.data} fallback={<option>Loading…</option>}>
+                {(summary) => (
+                  <For each={Object.entries(summary().queueCounts) as Array<[QueueName, number]>}>
+                    {([queueName, count]) => <option value={queueName}>{`${queueLabels[queueName]} (${count})`}</option>}
+                  </For>
+                )}
+              </Show>
+            </select>
+          </label>
+          <p class="summary-copy">
+            <Show when={summaryQuery.data} fallback="Loading summary…">
+              {(summary) => `${summary().totalImages} images, ${summary().unlabeled} unlabeled`}
+            </Show>
+          </p>
+          <div class="actions">
+            <button type="button" disabled={!summaryQuery.data?.canUndo || undoMutation.isPending} onClick={() => void handleUndo()}>
+              Undo last label
+            </button>
+          </div>
+          <div class="hint">Hotkeys: 1=milady, 2=not_milady, 3=unclear, x=skip, z=undo</div>
+        </aside>
+
+        <section class="panel workspace-panel">
+          <div class="workspace-header">
+            <div class="tab-bar">
+              <button type="button" class="tab-button" data-active={String(activeView() === "individual")} onClick={() => setActiveView("individual")}>
+                Individual
+              </button>
+              <button type="button" class="tab-button" data-active={String(activeView() === "batch")} onClick={() => setActiveView("batch")}>
+                Batch
+              </button>
+            </div>
+          </div>
+
+          <div class="view" hidden={activeView() !== "individual"}>
+            <div class="individual-layout">
+              <section class="panel">
+                <h2>{currentHeading()}</h2>
+                <Show when={currentItem()} fallback={<p class="loading-copy">Queue empty.</p>}>
+                  {(item) => (
+                    <>
+                      <div class="status-strip">
+                        <For each={renderStatusPills(item())}>
+                          {(pill) => (
+                            <span class="pill" data-tone={pill.tone}>
+                              {pill.text}
+                            </span>
+                          )}
+                        </For>
+                      </div>
+                      <img class="preview-image" src={imageUrl(item().sha256)} alt={item().sha256} />
+                      <div class="actions">
+                        <button type="button" disabled={labelMutation.isPending} onClick={() => void handleLabel("milady")}>
+                          1 Milady
+                        </button>
+                        <button type="button" disabled={labelMutation.isPending} onClick={() => void handleLabel("not_milady")}>
+                          2 Not Milady
+                        </button>
+                        <button type="button" disabled={labelMutation.isPending} onClick={() => void handleLabel("unclear")}>
+                          3 Unclear
+                        </button>
+                        <button type="button" onClick={() => void handleSkip()}>
+                          Skip
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </Show>
+              </section>
+
+              <div class="individual-stack">
+                <section class="panel">
+                  <h2>Metadata</h2>
+                  <Show when={currentItem()} fallback={<p class="empty-copy">Select an image to inspect it.</p>}>
+                    {(item) => (
+                      <dl class="metadata-grid">
+                        <For each={metadataRows(item())}>
+                          {(row) => (
+                            <>
+                              <dt>{row.label}</dt>
+                              <dd>
+                                {typeof row.value === "string" ? (
+                                  row.value
+                                ) : (
+                                  <a href={row.value.href} target="_blank" rel="noreferrer">
+                                    {row.value.text}
+                                  </a>
+                                )}
+                              </dd>
+                            </>
+                          )}
+                        </For>
+                      </dl>
+                    )}
+                  </Show>
+                </section>
+
+                <section class="panel">
+                  <div class="history-header">
+                    <h2>Recent labels</h2>
+                  </div>
+                  <Show when={(historyQuery.data?.history.length ?? 0) > 0} fallback={<p class="empty-copy">No recent labels yet.</p>}>
+                    <div class="history-grid">
+                      <For each={historyQuery.data?.history ?? []}>
+                        {(entry) => (
+                          <Show when={entry.item}>
+                            <button
+                              type="button"
+                              class="thumb-button"
+                              data-selected={String(selectedSha() === entry.sha256)}
+                              onClick={() => selectGridItem(entry.sha256)}
+                            >
+                              <img src={imageUrl(entry.sha256)} alt={entry.sha256} />
+                              <span>{labelDisplay[entry.newLabel]}</span>
+                            </button>
+                          </Show>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
+                </section>
+              </div>
+            </div>
+          </div>
+
+          <div class="view" hidden={activeView() !== "batch"}>
+            <section class="panel">
+              <div class="grid-toolbar">
+                <h2>Batch mode</h2>
+                <div class="batch-actions">
+                  <button type="button" onClick={() => void batchQuery.refetch()}>
+                    Load batch
+                  </button>
+                  <button type="button" disabled={batchAssignments().length === 0 || batchMutation.isPending} onClick={() => void handleCommitBatch()}>
+                    Enter: commit batch
+                  </button>
+                </div>
+              </div>
+              <div class="hint">Numpad 7/8/9 4/5/6 1/2/3 cycles each tile. Click also cycles. Enter commits.</div>
+              <div class="batch-panel">
+                <Show when={batchAssignments().length > 0} fallback={<p class="empty-copy">No items in this queue.</p>}>
+                  <div class="batch-grid">
+                    <For each={batchAssignments()}>
+                      {(entry, itemIndex) => (
+                        <button
+                          type="button"
+                          class="batch-tile"
+                          data-selected={String(itemIndex() === selectedBatchIndex())}
+                          data-label={entry.assignedLabel}
+                          onClick={() => {
+                            setSelectedBatchIndex(itemIndex());
+                            cycleBatchLabel(itemIndex());
+                          }}
+                        >
+                          <img src={imageUrl(entry.item.sha256)} alt={entry.item.sha256} />
+                          <div class="batch-caption">
+                            <span>{batchTileKeys[itemIndex()]}</span>
+                            <span class="batch-badge">{shortLabel(entry.assignedLabel)}</span>
+                          </div>
+                        </button>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section class="panel full-width">
+          <div class="grid-toolbar">
+            <h2>Browse grid</h2>
+            <div class="toolbar-inline">
+              <label>
+                <span>Source</span>
+                <select
+                  value={gridSource()}
+                  onInput={(event) => {
+                    const nextSource = event.currentTarget.value as GridSource;
+                    setGridSource(nextSource);
+                    setGridFilter(nextSource === "queue" ? queue() : "all");
+                  }}
+                >
+                  <option value="queue">Current queue</option>
+                  <option value="labeled">Labeled set</option>
+                </select>
+              </label>
+              <label>
+                <span>Filter</span>
+                <select value={gridFilter()} onInput={(event) => setGridFilter(event.currentTarget.value)}>
+                  <Show when={gridSource() === "queue"} fallback={
+                    <For each={Object.entries(labeledGridLabels) as Array<[LabeledGridFilter, string]>}>
+                      {([value, label]) => <option value={value}>{label}</option>}
+                    </For>
+                  }>
+                    <Show when={summaryQuery.data}>
+                      {(summary) => (
+                        <For each={Object.entries(summary().queueCounts) as Array<[QueueName, number]>}>
+                          {([queueName, count]) => <option value={queueName}>{`${queueLabels[queueName]} (${count})`}</option>}
+                        </For>
+                      )}
+                    </Show>
+                  </Show>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <Show when={(gridQuery.data?.items.length ?? 0) > 0} fallback={<p class="empty-copy">No images for this view.</p>}>
+            <Show
+              when={gridSource() === "queue"}
+              fallback={
+                <div class="thumb-grid">
+                  <For each={gridQuery.data?.items ?? []}>
+                    {(item) => (
+                      <button
+                        type="button"
+                        class="thumb-button"
+                        data-selected={String(selectedSha() === item.sha256)}
+                        onClick={() => selectGridItem(item.sha256)}
+                      >
+                        <img src={imageUrl(item.sha256)} alt={item.sha256} />
+                        <span>{item.label ? labelDisplay[item.label] : "unlabeled"}</span>
+                      </button>
+                    )}
+                  </For>
+                </div>
+              }
+            >
+              <div class="browse-sections">
+                <For each={groupedGridItems()}>
+                  {(group) => (
+                    <section class="grid-group">
+                      <div class="grid-group-header">{group.title}</div>
+                      <div class="thumb-grid">
+                        <For each={group.items}>
+                          {(item) => (
+                            <button
+                              type="button"
+                              class="thumb-button"
+                              data-selected={String(selectedSha() === item.sha256)}
+                              onClick={() => selectGridItem(item.sha256)}
+                            >
+                              <img src={imageUrl(item.sha256)} alt={item.sha256} />
+                              <span>{item.label ? labelDisplay[item.label] : "unlabeled"}</span>
+                            </button>
+                          )}
+                        </For>
+                      </div>
+                    </section>
+                  )}
+                </For>
+              </div>
+            </Show>
+          </Show>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+render(
+  () => (
+    <QueryClientProvider client={queryClient}>
+      <App />
+    </QueryClientProvider>
+  ),
+  document.getElementById("root")!,
+);
