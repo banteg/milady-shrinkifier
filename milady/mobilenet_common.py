@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 import math
 import random
+import sqlite3
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
-from typing import Iterable, Literal
+from typing import Literal
 
 import numpy as np
 import torch
@@ -15,6 +16,13 @@ from torch import nn
 from torch.utils.data import Dataset
 from torchvision import transforms
 from torchvision.models import MobileNet_V3_Small_Weights, mobilenet_v3_small
+
+from .pipeline_common import (
+    connect_offline_cache_db,
+    get_file_fingerprint,
+    inference_variant_cache_path,
+    write_npz_atomic,
+)
 
 MODEL_IMAGE_SIZE = 128
 MODEL_MEAN = [0.485, 0.456, 0.406]
@@ -127,25 +135,6 @@ def load_dataset_entries(path: Path) -> list[DatasetEntry]:
     return entries
 
 
-def deterministic_split_ids(ids: Iterable[str], ratios: tuple[float, float, float]) -> dict[str, str]:
-    train_ratio, val_ratio, _ = ratios
-    shuffled = list(ids)
-    rng = random.Random(SPLIT_SEED)
-    rng.shuffle(shuffled)
-    total = len(shuffled)
-    train_cutoff = int(total * train_ratio)
-    val_cutoff = train_cutoff + int(total * val_ratio)
-    assignments: dict[str, str] = {}
-    for index, sample_id in enumerate(shuffled):
-        if index < train_cutoff:
-            assignments[sample_id] = "train"
-        elif index < val_cutoff:
-            assignments[sample_id] = "val"
-        else:
-            assignments[sample_id] = "test"
-    return assignments
-
-
 def compute_metrics(probabilities: list[float], labels: list[int], threshold: float) -> dict[str, float]:
     true_positive = 0
     false_positive = 0
@@ -225,17 +214,27 @@ def dataset_entries_to_jsonl(entries: list[DatasetEntry], path: Path) -> None:
 
 
 def load_image_for_inference(path: Path) -> torch.Tensor:
-    with Image.open(path) as image:
-        prepared = image.convert("RGB")
-        return load_image_variants_for_inference(prepared)
+    connection = connect_offline_cache_db()
+    try:
+        return load_image_for_inference_with_cache(path, connection)
+    finally:
+        connection.close()
+
+
+def load_image_for_inference_with_cache(path: Path, connection: sqlite3.Connection) -> torch.Tensor:
+    fingerprint = get_file_fingerprint(connection, path, MODEL_IMAGE_SIZE)
+    if not fingerprint.readable:
+        raise ValueError(f"Unreadable image: {path}")
+    center, top = load_or_create_inference_variant_arrays(path, fingerprint.raw_sha)
+    return variants_tensor_from_arrays(center, top)
 
 
 def load_image_variants_for_inference(image: Image.Image) -> torch.Tensor:
-    variants = [prepare_inference_variant(image, variant) for variant in INFERENCE_CROP_VARIANTS]
-    return torch.stack(variants, dim=0)
+    arrays = [prepare_inference_variant_array(image, variant) for variant in INFERENCE_CROP_VARIANTS]
+    return variants_tensor_from_arrays(arrays[0], arrays[1])
 
 
-def prepare_inference_variant(image: Image.Image, variant: Literal["center", "top"]) -> torch.Tensor:
+def prepare_inference_variant_array(image: Image.Image, variant: Literal["center", "top"]) -> np.ndarray:
     centering = (0.5, 0.0) if variant == "top" else (0.5, 0.5)
     prepared = ImageOps.fit(
         image.convert("RGB"),
@@ -243,19 +242,60 @@ def prepare_inference_variant(image: Image.Image, variant: Literal["center", "to
         method=Image.Resampling.BICUBIC,
         centering=centering,
     )
-    tensor = transforms.ToTensor()(prepared)
-    return transforms.Normalize(mean=MODEL_MEAN, std=MODEL_STD)(tensor)
+    return np.asarray(prepared, dtype=np.uint8)
 
 
-def probabilities_from_model(model: nn.Module, paths: list[Path], device: torch.device, batch_size: int = 64) -> np.ndarray:
+def variants_tensor_from_arrays(center: np.ndarray, top: np.ndarray) -> torch.Tensor:
+    variants = [center, top]
+    tensors = []
+    for array in variants:
+        tensor = torch.from_numpy(np.array(array, copy=True)).permute(2, 0, 1).to(dtype=torch.float32) / 255.0
+        tensor = transforms.Normalize(mean=MODEL_MEAN, std=MODEL_STD)(tensor)
+        tensors.append(tensor)
+    return torch.stack(tensors, dim=0)
+
+
+def load_or_create_inference_variant_arrays(path: Path, raw_sha: str) -> tuple[np.ndarray, np.ndarray]:
+    cache_path = inference_variant_cache_path(raw_sha)
+    if cache_path.exists():
+        try:
+            with np.load(cache_path) as payload:
+                return payload["center"], payload["top"]
+        except Exception:  # noqa: BLE001
+            cache_path.unlink(missing_ok=True)
+
+    with Image.open(path) as image:
+        prepared = image.convert("RGB")
+        center = prepare_inference_variant_array(prepared, "center")
+        top = prepare_inference_variant_array(prepared, "top")
+    write_npz_atomic(cache_path, center=center, top=top)
+    return center, top
+
+
+def probabilities_from_model(
+    model: nn.Module,
+    paths: list[Path],
+    device: torch.device,
+    batch_size: int = 64,
+    connection: sqlite3.Connection | None = None,
+) -> np.ndarray:
     model.eval()
     batches: list[np.ndarray] = []
+    owned_connection = connection is None
+    cache_connection = connection or connect_offline_cache_db()
     with torch.no_grad():
-        for start in range(0, len(paths), batch_size):
-            batch_paths = paths[start : start + batch_size]
-            tensors = torch.cat([load_image_for_inference(path) for path in batch_paths], dim=0).to(device)
-            logits = model(tensors)
-            probabilities = score_logits_to_probabilities(logits).view(len(batch_paths), len(INFERENCE_CROP_VARIANTS))
-            max_probabilities = torch.max(probabilities, dim=1).values
-            batches.append(max_probabilities.detach().cpu().numpy())
+        try:
+            for start in range(0, len(paths), batch_size):
+                batch_paths = paths[start : start + batch_size]
+                tensors = torch.cat(
+                    [load_image_for_inference_with_cache(path, cache_connection) for path in batch_paths],
+                    dim=0,
+                ).to(device)
+                logits = model(tensors)
+                probabilities = score_logits_to_probabilities(logits).view(len(batch_paths), len(INFERENCE_CROP_VARIANTS))
+                max_probabilities = torch.max(probabilities, dim=1).values
+                batches.append(max_probabilities.detach().cpu().numpy())
+        finally:
+            if owned_connection:
+                cache_connection.close()
     return np.concatenate(batches) if batches else np.array([], dtype=np.float32)

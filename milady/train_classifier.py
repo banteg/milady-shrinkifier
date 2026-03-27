@@ -25,7 +25,7 @@ from .mobilenet_common import (
     load_dataset_entries,
     probabilities_from_model,
 )
-from .pipeline_common import MODEL_RUN_ROOT, SPLIT_ROOT
+from .pipeline_common import MODEL_RUN_ROOT, SPLIT_ROOT, connect_offline_cache_db
 
 DEFAULT_WANDB_PROJECT = "milady-shrinkifier"
 DEFAULT_WANDB_ENTITY = "banteg-"
@@ -72,166 +72,169 @@ def main() -> None:
     train_loader = DataLoader(AvatarDataset(train_entries, training=True), batch_size=args.batch_size, shuffle=True)
     run_dir = MODEL_RUN_ROOT / args.run_id
     run_dir.mkdir(parents=True, exist_ok=True)
+    cache_connection = connect_offline_cache_db()
+    try:
+        print_run_header(args, device, train_entries, val_entries, test_entries, run_dir)
+        wandb_run = init_wandb(args, device, train_entries, val_entries, test_entries, run_dir)
 
-    print_run_header(args, device, train_entries, val_entries, test_entries, run_dir)
-    wandb_run = init_wandb(args, device, train_entries, val_entries, test_entries, run_dir)
+        best_state: dict[str, torch.Tensor] | None = None
+        best_threshold = 0.995
+        best_recall = -1.0
+        best_epoch = -1
+        best_val_metrics: dict[str, float] | None = None
+        history: list[dict[str, float | int]] = []
+        stale_epochs = 0
+        training_started_at = perf_counter()
+        completed_epoch_durations: list[float] = []
+        global_step = 0
 
-    best_state: dict[str, torch.Tensor] | None = None
-    best_threshold = 0.995
-    best_recall = -1.0
-    best_epoch = -1
-    best_val_metrics: dict[str, float] | None = None
-    history: list[dict[str, float | int]] = []
-    stale_epochs = 0
-    training_started_at = perf_counter()
-    completed_epoch_durations: list[float] = []
-    global_step = 0
+        for epoch in range(1, args.epochs + 1):
+            print(f"[epoch {epoch}/{args.epochs}] start", flush=True)
+            epoch_started_at = perf_counter()
+            train_loss, global_step = run_epoch(
+                model,
+                train_loader,
+                criterion,
+                optimizer,
+                device,
+                epoch,
+                args.epochs,
+                args.log_every,
+                wandb_run,
+                global_step,
+            )
+            val_probabilities, val_labels = evaluate(model, val_entries, device, args.batch_size, cache_connection)
+            threshold, threshold_metrics = choose_threshold(val_probabilities, val_labels, args.precision_floor)
+            epoch_duration_seconds = perf_counter() - epoch_started_at
+            completed_epoch_durations.append(epoch_duration_seconds)
+            history.append(
+                {
+                    "epoch": epoch,
+                    "trainLoss": train_loss,
+                    "valPrecision": threshold_metrics["precision"],
+                    "valRecall": threshold_metrics["recall"],
+                    "valF1": threshold_metrics["f1"],
+                    "threshold": threshold,
+                }
+            )
+            if wandb_run is not None:
+                wandb.log(
+                    {
+                        "epoch": epoch,
+                        "trainer/global_step": global_step,
+                        "train/loss": train_loss,
+                        "val/precision": threshold_metrics["precision"],
+                        "val/recall": threshold_metrics["recall"],
+                        "val/f1": threshold_metrics["f1"],
+                        "val/threshold": threshold,
+                        "timing/epoch_seconds": epoch_duration_seconds,
+                        "timing/total_elapsed_seconds": perf_counter() - training_started_at,
+                    }
+                )
+            improved = threshold_metrics["recall"] > best_recall
+            stale_after_epoch = 0 if improved else stale_epochs + 1
+            overall_eta_seconds = estimate_overall_eta(args.epochs, epoch, completed_epoch_durations)
+            print_epoch_summary(
+                epoch,
+                args.epochs,
+                train_loss,
+                threshold,
+                threshold_metrics,
+                improved,
+                stale_after_epoch,
+                args.patience,
+                epoch_duration_seconds,
+                perf_counter() - training_started_at,
+                overall_eta_seconds,
+            )
 
-    for epoch in range(1, args.epochs + 1):
-        print(f"[epoch {epoch}/{args.epochs}] start", flush=True)
-        epoch_started_at = perf_counter()
-        train_loss, global_step = run_epoch(
-            model,
-            train_loader,
-            criterion,
-            optimizer,
-            device,
-            epoch,
-            args.epochs,
-            args.log_every,
-            wandb_run,
-            global_step,
-        )
-        val_probabilities, val_labels = evaluate(model, val_entries, device, args.batch_size)
-        threshold, threshold_metrics = choose_threshold(val_probabilities, val_labels, args.precision_floor)
-        epoch_duration_seconds = perf_counter() - epoch_started_at
-        completed_epoch_durations.append(epoch_duration_seconds)
-        history.append(
-            {
-                "epoch": epoch,
-                "trainLoss": train_loss,
-                "valPrecision": threshold_metrics["precision"],
-                "valRecall": threshold_metrics["recall"],
-                "valF1": threshold_metrics["f1"],
-                "threshold": threshold,
-            }
-        )
+            if improved:
+                best_state = {key: value.detach().cpu().clone() for key, value in model.state_dict().items()}
+                best_threshold = threshold
+                best_recall = threshold_metrics["recall"]
+                best_epoch = epoch
+                best_val_metrics = threshold_metrics
+                stale_epochs = 0
+                print(
+                    f"[epoch {epoch}/{args.epochs}] new best checkpoint "
+                    f"(recall={best_recall:.4f}, threshold={best_threshold:.4f})",
+                    flush=True,
+                )
+            else:
+                stale_epochs += 1
+                if stale_epochs >= args.patience:
+                    print(
+                        f"[epoch {epoch}/{args.epochs}] early stopping after {stale_epochs} stale epoch(s)",
+                        flush=True,
+                    )
+                    break
+
+        if best_state is None or best_val_metrics is None:
+            raise SystemExit("Training did not produce a checkpoint.")
+
+        checkpoint_path = run_dir / "best.pt"
+        torch.save(best_state, checkpoint_path)
+        print(f"[checkpoint] saved best weights to {checkpoint_path}", flush=True)
+
+        model.load_state_dict(best_state)
+        print("[test] evaluating best checkpoint on test split", flush=True)
+        test_probabilities, test_labels = evaluate(model, test_entries, device, args.batch_size, cache_connection)
+        test_metrics = compute_metrics(test_probabilities, test_labels, best_threshold)
+
+        summary = {
+            "runId": args.run_id,
+            "architecture": "mobilenet_v3_small",
+            "classNames": CLASS_NAMES,
+            "positiveIndex": POSITIVE_INDEX,
+            "imageSize": MODEL_IMAGE_SIZE,
+            "mean": MODEL_MEAN,
+            "std": MODEL_STD,
+            "precisionFloor": args.precision_floor,
+            "bestEpoch": best_epoch,
+            "threshold": best_threshold,
+            "history": history,
+            "valMetrics": best_val_metrics,
+            "testMetrics": test_metrics,
+            "checkpointPath": str(checkpoint_path),
+        }
+        (run_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True))
         if wandb_run is not None:
             wandb.log(
                 {
-                    "epoch": epoch,
-                    "trainer/global_step": global_step,
-                    "train/loss": train_loss,
-                    "val/precision": threshold_metrics["precision"],
-                    "val/recall": threshold_metrics["recall"],
-                    "val/f1": threshold_metrics["f1"],
-                    "val/threshold": threshold,
-                    "timing/epoch_seconds": epoch_duration_seconds,
-                    "timing/total_elapsed_seconds": perf_counter() - training_started_at,
+                    "epoch": best_epoch,
+                    "best/epoch": best_epoch,
+                    "best/threshold": best_threshold,
+                    "best/val_precision": best_val_metrics["precision"],
+                    "best/val_recall": best_val_metrics["recall"],
+                    "best/val_f1": best_val_metrics["f1"],
+                    "test/precision": test_metrics["precision"],
+                    "test/recall": test_metrics["recall"],
+                    "test/f1": test_metrics["f1"],
+                    "test/accuracy": test_metrics["accuracy"],
                 }
             )
-        improved = threshold_metrics["recall"] > best_recall
-        stale_after_epoch = 0 if improved else stale_epochs + 1
-        overall_eta_seconds = estimate_overall_eta(args.epochs, epoch, completed_epoch_durations)
-        print_epoch_summary(
-            epoch,
-            args.epochs,
-            train_loss,
-            threshold,
-            threshold_metrics,
-            improved,
-            stale_after_epoch,
-            args.patience,
-            epoch_duration_seconds,
-            perf_counter() - training_started_at,
-            overall_eta_seconds,
+            summary_artifact = wandb.Artifact(f"{args.run_id}-summary", type="training-summary")
+            summary_artifact.add_file(local_path=str(run_dir / "summary.json"), name="summary.json")
+            summary_artifact.add_file(local_path=str(checkpoint_path), name="best.pt")
+            wandb_run.log_artifact(summary_artifact)
+            wandb_run.summary["checkpoint_path"] = str(checkpoint_path)
+            wandb_run.summary["run_dir"] = str(run_dir)
+            wandb_run.summary["best_epoch"] = best_epoch
+            wandb_run.summary["best_threshold"] = best_threshold
+            wandb_run.finish()
+        print(
+            "[done] "
+            f"best_epoch={best_epoch} "
+            f"threshold={best_threshold:.4f} "
+            f"val_precision={best_val_metrics['precision']:.4f} "
+            f"val_recall={best_val_metrics['recall']:.4f} "
+            f"test_precision={test_metrics['precision']:.4f} "
+            f"test_recall={test_metrics['recall']:.4f}",
+            flush=True,
         )
-
-        if improved:
-            best_state = {key: value.detach().cpu().clone() for key, value in model.state_dict().items()}
-            best_threshold = threshold
-            best_recall = threshold_metrics["recall"]
-            best_epoch = epoch
-            best_val_metrics = threshold_metrics
-            stale_epochs = 0
-            print(
-                f"[epoch {epoch}/{args.epochs}] new best checkpoint "
-                f"(recall={best_recall:.4f}, threshold={best_threshold:.4f})",
-                flush=True,
-            )
-        else:
-            stale_epochs += 1
-            if stale_epochs >= args.patience:
-                print(
-                    f"[epoch {epoch}/{args.epochs}] early stopping after {stale_epochs} stale epoch(s)",
-                    flush=True,
-                )
-                break
-
-    if best_state is None or best_val_metrics is None:
-        raise SystemExit("Training did not produce a checkpoint.")
-
-    checkpoint_path = run_dir / "best.pt"
-    torch.save(best_state, checkpoint_path)
-    print(f"[checkpoint] saved best weights to {checkpoint_path}", flush=True)
-
-    model.load_state_dict(best_state)
-    print("[test] evaluating best checkpoint on test split", flush=True)
-    test_probabilities, test_labels = evaluate(model, test_entries, device, args.batch_size)
-    test_metrics = compute_metrics(test_probabilities, test_labels, best_threshold)
-
-    summary = {
-        "runId": args.run_id,
-        "architecture": "mobilenet_v3_small",
-        "classNames": CLASS_NAMES,
-        "positiveIndex": POSITIVE_INDEX,
-        "imageSize": MODEL_IMAGE_SIZE,
-        "mean": MODEL_MEAN,
-        "std": MODEL_STD,
-        "precisionFloor": args.precision_floor,
-        "bestEpoch": best_epoch,
-        "threshold": best_threshold,
-        "history": history,
-        "valMetrics": best_val_metrics,
-        "testMetrics": test_metrics,
-        "checkpointPath": str(checkpoint_path),
-    }
-    (run_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True))
-    if wandb_run is not None:
-        wandb.log(
-            {
-                "epoch": best_epoch,
-                "best/epoch": best_epoch,
-                "best/threshold": best_threshold,
-                "best/val_precision": best_val_metrics["precision"],
-                "best/val_recall": best_val_metrics["recall"],
-                "best/val_f1": best_val_metrics["f1"],
-                "test/precision": test_metrics["precision"],
-                "test/recall": test_metrics["recall"],
-                "test/f1": test_metrics["f1"],
-                "test/accuracy": test_metrics["accuracy"],
-            }
-        )
-        summary_artifact = wandb.Artifact(f"{args.run_id}-summary", type="training-summary")
-        summary_artifact.add_file(local_path=str(run_dir / "summary.json"), name="summary.json")
-        summary_artifact.add_file(local_path=str(checkpoint_path), name="best.pt")
-        wandb_run.log_artifact(summary_artifact)
-        wandb_run.summary["checkpoint_path"] = str(checkpoint_path)
-        wandb_run.summary["run_dir"] = str(run_dir)
-        wandb_run.summary["best_epoch"] = best_epoch
-        wandb_run.summary["best_threshold"] = best_threshold
-        wandb_run.finish()
-    print(
-        "[done] "
-        f"best_epoch={best_epoch} "
-        f"threshold={best_threshold:.4f} "
-        f"val_precision={best_val_metrics['precision']:.4f} "
-        f"val_recall={best_val_metrics['recall']:.4f} "
-        f"test_precision={test_metrics['precision']:.4f} "
-        f"test_recall={test_metrics['recall']:.4f}",
-        flush=True,
-    )
-    print(json.dumps(summary, indent=2, sort_keys=True))
+        print(json.dumps(summary, indent=2, sort_keys=True))
+    finally:
+        cache_connection.close()
 
 
 def init_wandb(
@@ -365,8 +368,20 @@ def run_epoch(
     return total_loss / max(1, total_items), global_step_base + total_batches
 
 
-def evaluate(model: nn.Module, entries: list, device: torch.device, batch_size: int = 64) -> tuple[list[float], list[int]]:
-    probabilities = probabilities_from_model(model, [entry.path for entry in entries], device, batch_size=batch_size).tolist()
+def evaluate(
+    model: nn.Module,
+    entries: list,
+    device: torch.device,
+    batch_size: int = 64,
+    cache_connection=None,
+) -> tuple[list[float], list[int]]:
+    probabilities = probabilities_from_model(
+        model,
+        [entry.path for entry in entries],
+        device,
+        batch_size=batch_size,
+        connection=cache_connection,
+    ).tolist()
     labels = [1 if entry.label == "milady" else 0 for entry in entries]
     return probabilities, labels
 

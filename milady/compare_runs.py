@@ -8,7 +8,7 @@ from pathlib import Path
 import torch
 
 from .mobilenet_common import compute_metrics, create_model, load_dataset_entries, probabilities_from_model
-from .pipeline_common import MODEL_COMPARE_ROOT, MODEL_RUN_ROOT, SPLIT_ROOT, ensure_layout
+from .pipeline_common import MODEL_COMPARE_ROOT, MODEL_RUN_ROOT, SPLIT_ROOT, connect_offline_cache_db, ensure_layout
 
 
 def parse_args() -> argparse.Namespace:
@@ -31,79 +31,83 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     device = choose_device(args.cpu)
-    val_entries = load_dataset_entries(SPLIT_ROOT / "val.jsonl")
-    test_entries = load_dataset_entries(SPLIT_ROOT / "test.jsonl")
-    if not val_entries or not test_entries:
-        raise SystemExit("Missing val/test split files. Run `uv run milady build-dataset` first.")
-    print(
-        f"[compare] device={device.type} runs={len(run_ids)} val={len(val_entries)} test={len(test_entries)}",
-        flush=True,
-    )
-    print(f"[compare] output_dir={output_dir}", flush=True)
-
-    results: dict[str, object] = {
-        "generatedAt": datetime.now(UTC).isoformat(),
-        "device": device.type,
-        "valSize": len(val_entries),
-        "testSize": len(test_entries),
-        "runIds": run_ids,
-        "runs": {},
-    }
-
-    for run_id in run_ids:
-        summary_path = MODEL_RUN_ROOT / run_id / "summary.json"
-        checkpoint_path = MODEL_RUN_ROOT / run_id / "best.pt"
-        if not summary_path.exists() or not checkpoint_path.exists():
-            raise SystemExit(f"Missing summary or checkpoint for run {run_id}")
-        print(f"[compare:{run_id}] loading checkpoint", flush=True)
-
-        summary = json.loads(summary_path.read_text())
-        precision_floor = float(summary["precisionFloor"])
-
-        model = create_model(pretrained=False).to(device)
-        state = torch.load(checkpoint_path, map_location=device)
-        model.load_state_dict(state)
-
-        print(f"[compare:{run_id}] evaluating validation split", flush=True)
-        val_probabilities, val_labels = evaluate(model, val_entries, device, args.batch_size)
-        threshold, val_metrics = choose_threshold(val_probabilities, val_labels, precision_floor)
+    cache_connection = connect_offline_cache_db()
+    try:
+        val_entries = load_dataset_entries(SPLIT_ROOT / "val.jsonl")
+        test_entries = load_dataset_entries(SPLIT_ROOT / "test.jsonl")
+        if not val_entries or not test_entries:
+            raise SystemExit("Missing val/test split files. Run `uv run milady build-dataset` first.")
         print(
-            f"[compare:{run_id}] validation done threshold={threshold:.4f} "
-            f"precision={val_metrics['precision']:.4f} recall={val_metrics['recall']:.4f}",
+            f"[compare] device={device.type} runs={len(run_ids)} val={len(val_entries)} test={len(test_entries)}",
             flush=True,
         )
-        print(f"[compare:{run_id}] evaluating test split", flush=True)
-        test_probabilities, test_labels = evaluate(model, test_entries, device, args.batch_size)
-        test_metrics = compute_metrics(test_probabilities, test_labels, threshold)
+        print(f"[compare] output_dir={output_dir}", flush=True)
 
-        false_positives = collect_errors(test_entries, test_probabilities, test_labels, threshold, want_predicted=1, want_label=0)
-        false_negatives = collect_errors(test_entries, test_probabilities, test_labels, threshold, want_predicted=0, want_label=1)
-
-        false_positives_path = output_dir / f"{run_id}.false_positives.json"
-        false_negatives_path = output_dir / f"{run_id}.false_negatives.json"
-        false_positives_path.write_text(json.dumps(false_positives, indent=2, sort_keys=True))
-        false_negatives_path.write_text(json.dumps(false_negatives, indent=2, sort_keys=True))
-        print(
-            f"[compare:{run_id}] test done precision={test_metrics['precision']:.4f} "
-            f"recall={test_metrics['recall']:.4f} fp={len(false_positives)} fn={len(false_negatives)}",
-            flush=True,
-        )
-
-        results["runs"][run_id] = {
-            "threshold": threshold,
-            "precisionFloor": precision_floor,
-            "valMetrics": val_metrics,
-            "testMetrics": test_metrics,
-            "falsePositiveCount": len(false_positives),
-            "falseNegativeCount": len(false_negatives),
-            "falsePositivesPath": str(false_positives_path),
-            "falseNegativesPath": str(false_negatives_path),
+        results: dict[str, object] = {
+            "generatedAt": datetime.now(UTC).isoformat(),
+            "device": device.type,
+            "valSize": len(val_entries),
+            "testSize": len(test_entries),
+            "runIds": run_ids,
+            "runs": {},
         }
 
-    summary_output = output_dir / "summary.json"
-    summary_output.write_text(json.dumps(results, indent=2, sort_keys=True))
-    print(json.dumps(results, indent=2, sort_keys=True))
-    print(f"[saved] {summary_output}")
+        for run_id in run_ids:
+            summary_path = MODEL_RUN_ROOT / run_id / "summary.json"
+            checkpoint_path = MODEL_RUN_ROOT / run_id / "best.pt"
+            if not summary_path.exists() or not checkpoint_path.exists():
+                raise SystemExit(f"Missing summary or checkpoint for run {run_id}")
+            print(f"[compare:{run_id}] loading checkpoint", flush=True)
+
+            summary = json.loads(summary_path.read_text())
+            precision_floor = float(summary["precisionFloor"])
+
+            model = create_model(pretrained=False).to(device)
+            state = torch.load(checkpoint_path, map_location=device)
+            model.load_state_dict(state)
+
+            print(f"[compare:{run_id}] evaluating validation split", flush=True)
+            val_probabilities, val_labels = evaluate(model, val_entries, device, args.batch_size, cache_connection)
+            threshold, val_metrics = choose_threshold(val_probabilities, val_labels, precision_floor)
+            print(
+                f"[compare:{run_id}] validation done threshold={threshold:.4f} "
+                f"precision={val_metrics['precision']:.4f} recall={val_metrics['recall']:.4f}",
+                flush=True,
+            )
+            print(f"[compare:{run_id}] evaluating test split", flush=True)
+            test_probabilities, test_labels = evaluate(model, test_entries, device, args.batch_size, cache_connection)
+            test_metrics = compute_metrics(test_probabilities, test_labels, threshold)
+
+            false_positives = collect_errors(test_entries, test_probabilities, test_labels, threshold, want_predicted=1, want_label=0)
+            false_negatives = collect_errors(test_entries, test_probabilities, test_labels, threshold, want_predicted=0, want_label=1)
+
+            false_positives_path = output_dir / f"{run_id}.false_positives.json"
+            false_negatives_path = output_dir / f"{run_id}.false_negatives.json"
+            false_positives_path.write_text(json.dumps(false_positives, indent=2, sort_keys=True))
+            false_negatives_path.write_text(json.dumps(false_negatives, indent=2, sort_keys=True))
+            print(
+                f"[compare:{run_id}] test done precision={test_metrics['precision']:.4f} "
+                f"recall={test_metrics['recall']:.4f} fp={len(false_positives)} fn={len(false_negatives)}",
+                flush=True,
+            )
+
+            results["runs"][run_id] = {
+                "threshold": threshold,
+                "precisionFloor": precision_floor,
+                "valMetrics": val_metrics,
+                "testMetrics": test_metrics,
+                "falsePositiveCount": len(false_positives),
+                "falseNegativeCount": len(false_negatives),
+                "falsePositivesPath": str(false_positives_path),
+                "falseNegativesPath": str(false_negatives_path),
+            }
+
+        summary_output = output_dir / "summary.json"
+        summary_output.write_text(json.dumps(results, indent=2, sort_keys=True))
+        print(json.dumps(results, indent=2, sort_keys=True))
+        print(f"[saved] {summary_output}")
+    finally:
+        cache_connection.close()
 
 
 def dedupe(run_ids: list[str]) -> list[str]:
@@ -133,8 +137,20 @@ def choose_device(force_cpu: bool) -> torch.device:
     return torch.device("cpu")
 
 
-def evaluate(model: torch.nn.Module, entries: list, device: torch.device, batch_size: int = 64) -> tuple[list[float], list[int]]:
-    probabilities = probabilities_from_model(model, [entry.path for entry in entries], device, batch_size=batch_size).tolist()
+def evaluate(
+    model: torch.nn.Module,
+    entries: list,
+    device: torch.device,
+    batch_size: int = 64,
+    cache_connection=None,
+) -> tuple[list[float], list[int]]:
+    probabilities = probabilities_from_model(
+        model,
+        [entry.path for entry in entries],
+        device,
+        batch_size=batch_size,
+        connection=cache_connection,
+    ).tolist()
     labels = [1 if entry.label == "milady" else 0 for entry in entries]
     return probabilities, labels
 

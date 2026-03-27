@@ -7,7 +7,7 @@ from pathlib import Path
 import torch
 
 from .mobilenet_common import probabilities_from_model, create_model
-from .pipeline_common import MODEL_RUN_ROOT, connect_db, now_iso, resolve_repo_path
+from .pipeline_common import MODEL_RUN_ROOT, connect_db, connect_offline_cache_db, now_iso, resolve_repo_path
 
 
 def parse_args() -> argparse.Namespace:
@@ -39,59 +39,64 @@ def main() -> None:
     model.eval()
 
     connection = connect_db()
-    rows = connection.execute(
-        """
-        SELECT sha256, local_path, split
-        FROM images
-        WHERE local_path IS NOT NULL
-        ORDER BY updated_at DESC
-        """
-    ).fetchall()
-    if args.limit is not None:
-        rows = rows[: args.limit]
-
-    created_at = now_iso()
-    scored = 0
-    batch_paths: list[Path] = []
-    batch_rows = []
-    for row in rows:
-        path = resolve_repo_path(str(row["local_path"]))
-        if not path.exists():
-            continue
-        batch_paths.append(path)
-        batch_rows.append(row)
-
-    probabilities = probabilities_from_model(model, batch_paths, device, batch_size=64)
-    for row, probability in zip(batch_rows, probabilities.tolist(), strict=True):
-        connection.execute(
+    cache_connection = connect_offline_cache_db()
+    try:
+        rows = connection.execute(
             """
-            INSERT INTO model_scores (
-              run_id,
-              image_sha256,
-              score,
-              predicted_label,
-              split,
-              created_at
-            ) VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(run_id, image_sha256) DO UPDATE SET
-              score = excluded.score,
-              predicted_label = excluded.predicted_label,
-              split = excluded.split,
-              created_at = excluded.created_at
-            """,
-            (
-                args.run_id,
-                str(row["sha256"]),
-                probability,
-                "milady" if probability >= threshold else "not_milady",
-                row["split"],
-                created_at,
-            ),
-        )
-        scored += 1
+            SELECT sha256, local_path, split
+            FROM images
+            WHERE local_path IS NOT NULL
+            ORDER BY updated_at DESC
+            """
+        ).fetchall()
+        if args.limit is not None:
+            rows = rows[: args.limit]
 
-    connection.commit()
-    print(f"Scored {scored} image(s) for run {args.run_id}.")
+        created_at = now_iso()
+        scored = 0
+        batch_paths: list[Path] = []
+        batch_rows = []
+        for row in rows:
+            path = resolve_repo_path(str(row["local_path"]))
+            if not path.exists():
+                continue
+            batch_paths.append(path)
+            batch_rows.append(row)
+
+        probabilities = probabilities_from_model(model, batch_paths, device, batch_size=64, connection=cache_connection)
+        for row, probability in zip(batch_rows, probabilities.tolist(), strict=True):
+            connection.execute(
+                """
+                INSERT INTO model_scores (
+                  run_id,
+                  image_sha256,
+                  score,
+                  predicted_label,
+                  split,
+                  created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_id, image_sha256) DO UPDATE SET
+                  score = excluded.score,
+                  predicted_label = excluded.predicted_label,
+                  split = excluded.split,
+                  created_at = excluded.created_at
+                """,
+                (
+                    args.run_id,
+                    str(row["sha256"]),
+                    probability,
+                    "milady" if probability >= threshold else "not_milady",
+                    row["split"],
+                    created_at,
+                ),
+            )
+            scored += 1
+
+        connection.commit()
+        print(f"Scored {scored} image(s) for run {args.run_id}.")
+    finally:
+        cache_connection.close()
+        connection.close()
 
 
 def choose_device(force_cpu: bool) -> torch.device:

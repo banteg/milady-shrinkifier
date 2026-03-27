@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import mimetypes
+import os
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -10,6 +11,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from PIL import Image
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -20,6 +22,10 @@ DERIVATIVE_ROOT = CACHE_ROOT / "derivatives"
 DERIVATIVE_MANIFEST_PATH = DERIVATIVE_ROOT / "manifest.json"
 DATASET_ROOT = CACHE_ROOT / "dataset"
 SPLIT_ROOT = DATASET_ROOT / "splits"
+SPLIT_MANIFEST_PATH = DATASET_ROOT / "split_manifest.json"
+INFERENCE_VARIANT_CACHE_VERSION = "cover-center-top-v1"
+INFERENCE_VARIANT_ROOT = DATASET_ROOT / "inference_variants" / INFERENCE_VARIANT_CACHE_VERSION
+OFFLINE_CACHE_PATH = DATASET_ROOT / "offline_cache.sqlite"
 MODEL_RUN_ROOT = CACHE_ROOT / "models" / "mobilenet_v3_small"
 MODEL_COMPARE_ROOT = MODEL_RUN_ROOT / "compare"
 CATALOG_PATH = DATASET_ROOT / "avatar_catalog.sqlite"
@@ -98,6 +104,20 @@ class ReviewItem:
         }
 
 
+@dataclass(slots=True)
+class FileFingerprint:
+    path: str
+    file_size: int
+    mtime_ns: int
+    image_size: int
+    raw_sha: str
+    pixel_digest: str
+    width: int | None
+    height: int | None
+    readable: bool
+    updated_at: str
+
+
 def now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -108,6 +128,7 @@ def ensure_layout() -> None:
     DERIVATIVE_ROOT.mkdir(parents=True, exist_ok=True)
     DATASET_ROOT.mkdir(parents=True, exist_ok=True)
     SPLIT_ROOT.mkdir(parents=True, exist_ok=True)
+    INFERENCE_VARIANT_ROOT.mkdir(parents=True, exist_ok=True)
     MODEL_RUN_ROOT.mkdir(parents=True, exist_ok=True)
     MODEL_COMPARE_ROOT.mkdir(parents=True, exist_ok=True)
 
@@ -121,6 +142,17 @@ def connect_db(path: Path = CATALOG_PATH) -> sqlite3.Connection:
     connection.execute("PRAGMA journal_mode=WAL")
     connection.execute("PRAGMA foreign_keys=ON")
     init_db(connection)
+    return connection
+
+
+def connect_offline_cache_db(path: Path = OFFLINE_CACHE_PATH) -> sqlite3.Connection:
+    ensure_layout()
+    resolved_path = resolve_repo_path(path)
+    resolved_path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(str(resolved_path), timeout=30.0)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA journal_mode=WAL")
+    init_offline_cache_db(connection)
     return connection
 
 
@@ -211,6 +243,29 @@ def init_db(connection: sqlite3.Connection) -> None:
         """
     )
     ensure_column(connection, "label_events", "batch_id", "TEXT")
+    connection.commit()
+
+
+def init_offline_cache_db(connection: sqlite3.Connection) -> None:
+    connection.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS file_fingerprints (
+          path TEXT PRIMARY KEY,
+          file_size INTEGER NOT NULL,
+          mtime_ns INTEGER NOT NULL,
+          image_size INTEGER NOT NULL,
+          raw_sha TEXT NOT NULL,
+          pixel_digest TEXT NOT NULL,
+          width INTEGER,
+          height INTEGER,
+          readable INTEGER NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_file_fingerprints_raw_sha ON file_fingerprints(raw_sha);
+        CREATE INDEX IF NOT EXISTS idx_file_fingerprints_pixel_digest ON file_fingerprints(pixel_digest);
+        """
+    )
     connection.commit()
 
 
@@ -309,11 +364,117 @@ def inspect_image_bytes(payload: bytes) -> tuple[int, int, str | None]:
     return width, height, mime_type
 
 
-def normalized_pixel_digest(path: Path, image_size: int) -> str:
-    with Image.open(path) as image:
-        prepared = image.convert("RGB").resize((image_size, image_size), Image.Resampling.BICUBIC)
-        payload = prepared.tobytes()
-    return sha256_bytes(payload)
+def get_file_fingerprint(connection: sqlite3.Connection, path: Path, image_size: int) -> FileFingerprint:
+    resolved_path = resolve_repo_path(path)
+    stat_result = resolved_path.stat()
+    cache_row = connection.execute(
+        """
+        SELECT *
+        FROM file_fingerprints
+        WHERE path = ?
+          AND file_size = ?
+          AND mtime_ns = ?
+          AND image_size = ?
+        """,
+        (str(resolved_path), stat_result.st_size, stat_result.st_mtime_ns, image_size),
+    ).fetchone()
+    if cache_row is not None:
+        return row_to_file_fingerprint(cache_row)
+
+    updated_at = now_iso()
+    readable = True
+    raw_sha = ""
+    pixel_digest = ""
+    width: int | None = None
+    height: int | None = None
+    try:
+        payload = resolved_path.read_bytes()
+        raw_sha = sha256_bytes(payload)
+        with Image.open(BytesIO(payload)) as image:
+            width, height = image.size
+            prepared = image.convert("RGB").resize((image_size, image_size), Image.Resampling.BICUBIC)
+            pixel_digest = sha256_bytes(prepared.tobytes())
+    except Exception:  # noqa: BLE001
+        readable = False
+
+    connection.execute(
+        """
+        INSERT INTO file_fingerprints (
+          path,
+          file_size,
+          mtime_ns,
+          image_size,
+          raw_sha,
+          pixel_digest,
+          width,
+          height,
+          readable,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(path) DO UPDATE SET
+          file_size = excluded.file_size,
+          mtime_ns = excluded.mtime_ns,
+          image_size = excluded.image_size,
+          raw_sha = excluded.raw_sha,
+          pixel_digest = excluded.pixel_digest,
+          width = excluded.width,
+          height = excluded.height,
+          readable = excluded.readable,
+          updated_at = excluded.updated_at
+        """,
+        (
+            str(resolved_path),
+            stat_result.st_size,
+            stat_result.st_mtime_ns,
+            image_size,
+            raw_sha,
+            pixel_digest,
+            width,
+            height,
+            1 if readable else 0,
+            updated_at,
+        ),
+    )
+    return FileFingerprint(
+        path=str(resolved_path),
+        file_size=stat_result.st_size,
+        mtime_ns=stat_result.st_mtime_ns,
+        image_size=image_size,
+        raw_sha=raw_sha,
+        pixel_digest=pixel_digest,
+        width=width,
+        height=height,
+        readable=readable,
+        updated_at=updated_at,
+    )
+
+
+def row_to_file_fingerprint(row: sqlite3.Row) -> FileFingerprint:
+    return FileFingerprint(
+        path=str(row["path"]),
+        file_size=int(row["file_size"]),
+        mtime_ns=int(row["mtime_ns"]),
+        image_size=int(row["image_size"]),
+        raw_sha=str(row["raw_sha"]),
+        pixel_digest=str(row["pixel_digest"]),
+        width=int(row["width"]) if row["width"] is not None else None,
+        height=int(row["height"]) if row["height"] is not None else None,
+        readable=bool(row["readable"]),
+        updated_at=str(row["updated_at"]),
+    )
+
+
+def inference_variant_cache_path(raw_sha: str) -> Path:
+    directory = INFERENCE_VARIANT_ROOT / raw_sha[:2]
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory / f"{raw_sha}.npz"
+
+
+def write_npz_atomic(path: Path, **arrays: np.ndarray) -> None:
+    temporary_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    with temporary_path.open("wb") as handle:
+        np.savez_compressed(handle, **arrays)
+    temporary_path.replace(path)
 
 
 def load_review_items(connection: sqlite3.Connection) -> list[ReviewItem]:
