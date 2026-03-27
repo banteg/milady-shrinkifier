@@ -569,6 +569,21 @@ INDEX_HTML = """<!doctype html>
         grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
         gap: 10px;
       }
+      .grid-group {
+        display: grid;
+        gap: 10px;
+        margin-bottom: 18px;
+      }
+      .grid-group:last-child {
+        margin-bottom: 0;
+      }
+      .grid-group-header {
+        font-size: 12px;
+        font-weight: 600;
+        color: #555;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
       .labeled-thumb {
         display: block;
         padding: 0;
@@ -995,7 +1010,41 @@ INDEX_HTML = """<!doctype html>
         const payload = await response.json();
         labeledGrid.innerHTML = "";
         labeledGridEmpty.hidden = payload.items.length > 0;
-        for (const item of payload.items) {
+        if (source === "queue") {
+          renderGroupedQueueGrid(payload.items);
+          return;
+        }
+        renderGridItems(payload.items, labeledGrid);
+      }
+
+      function renderGroupedQueueGrid(items) {
+        const order = ["unlabeled", "milady", "not_milady", "unclear"];
+        const labels = {
+          unlabeled: "Unlabeled",
+          milady: "Milady",
+          not_milady: "Not Milady",
+          unclear: "Unclear",
+        };
+        for (const key of order) {
+          const groupedItems = items.filter((item) => (item.label || "unlabeled") === key);
+          if (groupedItems.length === 0) {
+            continue;
+          }
+          const section = document.createElement("section");
+          section.className = "grid-group";
+          const header = document.createElement("div");
+          header.className = "grid-group-header";
+          header.textContent = `${labels[key]} (${groupedItems.length})`;
+          const grid = document.createElement("div");
+          grid.className = "labeled-grid";
+          renderGridItems(groupedItems, grid);
+          section.append(header, grid);
+          labeledGrid.append(section);
+        }
+      }
+
+      function renderGridItems(items, container) {
+        for (const item of items) {
           const button = document.createElement("button");
           button.type = "button";
           button.className = "labeled-thumb";
@@ -1007,7 +1056,7 @@ INDEX_HTML = """<!doctype html>
             await loadBrowseGrid();
             await loadItem();
           });
-          labeledGrid.append(button);
+          container.append(button);
         }
       }
 
