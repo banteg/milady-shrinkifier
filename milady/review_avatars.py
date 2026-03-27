@@ -826,7 +826,7 @@ INDEX_HTML = """<!doctype html>
         const payload = await response.json();
         batchItems = payload.items.map((item, index) => ({
           item,
-          assignedLabel: "not_milady",
+          assignedLabel: initialBatchLabel(item, queue),
           position: index,
         }));
         selectedBatchIndex = 0;
@@ -860,6 +860,16 @@ INDEX_HTML = """<!doctype html>
         if (label === "milady") return "M";
         if (label === "unclear") return "U";
         return "N";
+      }
+
+      function initialBatchLabel(item, queue) {
+        if (item.label === "milady" || item.label === "not_milady" || item.label === "unclear") {
+          return item.label;
+        }
+        if (queue === "heuristic_matches" && item.heuristicMatch) {
+          return "milady";
+        }
+        return "not_milady";
       }
 
       function cycleBatchLabel(index) {
