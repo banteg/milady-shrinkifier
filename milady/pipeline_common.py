@@ -39,6 +39,7 @@ REVIEW_QUEUES = (
     "whitelisted",
     "high_seen_count",
     "notification_group",
+    "uncertain_unlabeled",
     "high_score_unlabeled",
     "high_score_false_positive",
 )
@@ -66,6 +67,8 @@ class ReviewItem:
     max_model_score: float | None
     latest_model_predicted_label: str | None
     latest_model_run_id: str | None
+    latest_model_threshold: float | None
+    latest_model_distance_to_threshold: float | None
     disagreement_flags: list[str]
     labeled_at: str | None
     example_profile_url: str | None
@@ -94,6 +97,8 @@ class ReviewItem:
             "maxModelScore": self.max_model_score,
             "latestModelPredictedLabel": self.latest_model_predicted_label,
             "latestModelRunId": self.latest_model_run_id,
+            "latestModelThreshold": self.latest_model_threshold,
+            "latestModelDistanceToThreshold": self.latest_model_distance_to_threshold,
             "disagreementFlags": self.disagreement_flags,
             "labeledAt": self.labeled_at,
             "exampleProfileUrl": self.example_profile_url,
@@ -517,6 +522,14 @@ def load_review_items(connection: sqlite3.Connection) -> list[ReviewItem]:
     for row in avatar_rows:
         avatar_by_sha.setdefault(str(row["image_sha256"]), []).append(row)
 
+    thresholds_by_run = load_model_thresholds(
+        {
+            str(row["latest_model_run_id"])
+            for row in image_rows
+            if row["latest_model_run_id"] is not None
+        }
+    )
+
     review_items: list[ReviewItem] = []
     for image_row in image_rows:
         sha256 = str(image_row["sha256"])
@@ -560,6 +573,18 @@ def load_review_items(connection: sqlite3.Connection) -> list[ReviewItem]:
             if image_row["latest_model_predicted_label"] is not None
             else None
         )
+        latest_model_run_id = (
+            str(image_row["latest_model_run_id"])
+            if image_row["latest_model_run_id"] is not None
+            else None
+        )
+        latest_model_threshold = thresholds_by_run.get(latest_model_run_id) if latest_model_run_id else None
+        latest_model_score = float(image_row["latest_model_score"]) if image_row["latest_model_score"] is not None else None
+        latest_model_distance_to_threshold = (
+            abs(latest_model_score - latest_model_threshold)
+            if latest_model_score is not None and latest_model_threshold is not None
+            else None
+        )
         heuristic_predicted_label = "milady" if heuristic_match else "not_milady"
         disagreement_flags: list[str] = []
         if latest_model_predicted_label and latest_model_predicted_label != heuristic_predicted_label:
@@ -587,13 +612,11 @@ def load_review_items(connection: sqlite3.Connection) -> list[ReviewItem]:
                 heuristic_score=heuristic_score,
                 heuristic_token_id=heuristic_token_id,
                 whitelisted=whitelisted,
-                max_model_score=float(image_row["latest_model_score"])
-                if image_row["latest_model_score"] is not None
-                else None,
+                max_model_score=latest_model_score,
                 latest_model_predicted_label=latest_model_predicted_label,
-                latest_model_run_id=str(image_row["latest_model_run_id"])
-                if image_row["latest_model_run_id"] is not None
-                else None,
+                latest_model_run_id=latest_model_run_id,
+                latest_model_threshold=latest_model_threshold,
+                latest_model_distance_to_threshold=latest_model_distance_to_threshold,
                 disagreement_flags=disagreement_flags,
                 labeled_at=str(image_row["labeled_at"]) if image_row["labeled_at"] is not None else None,
                 example_profile_url=example_profile_url,
@@ -654,6 +677,22 @@ def queue_items(items: list[ReviewItem], queue_name: str) -> list[ReviewItem]:
             reverse=True,
         )
 
+    if queue_name == "uncertain_unlabeled":
+        return sorted(
+            (
+                item
+                for item in items
+                if item.label is None
+                and item.max_model_score is not None
+                and item.latest_model_threshold is not None
+                and item.latest_model_distance_to_threshold is not None
+            ),
+            key=lambda item: (
+                item.latest_model_distance_to_threshold if item.latest_model_distance_to_threshold is not None else float("inf"),
+                -(item.seen_count),
+            ),
+        )
+
     if queue_name == "high_score_unlabeled":
         return sorted(
             (
@@ -674,6 +713,22 @@ def queue_items(items: list[ReviewItem], queue_name: str) -> list[ReviewItem]:
         key=lambda item: item.max_model_score if item.max_model_score is not None else -1.0,
         reverse=True,
     )
+
+
+def load_model_thresholds(run_ids: set[str]) -> dict[str, float]:
+    thresholds: dict[str, float] = {}
+    for run_id in sorted(run_ids):
+        summary_path = MODEL_RUN_ROOT / run_id / "summary.json"
+        if not summary_path.exists():
+            continue
+        try:
+            payload = json.loads(summary_path.read_text())
+            threshold = payload.get("threshold")
+            if threshold is not None:
+                thresholds[run_id] = float(threshold)
+        except (OSError, ValueError, TypeError):
+            continue
+    return thresholds
 
 
 def labeled_grid_items(items: list[ReviewItem], filter_name: str) -> list[ReviewItem]:

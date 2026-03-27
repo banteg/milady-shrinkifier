@@ -13,6 +13,7 @@ type QueueName =
   | "whitelisted"
   | "high_seen_count"
   | "notification_group"
+  | "uncertain_unlabeled"
   | "high_score_unlabeled"
   | "high_score_false_positive";
 type GridSource = "queue" | "labeled";
@@ -37,6 +38,8 @@ interface ReviewItem {
   maxModelScore: number | null;
   latestModelPredictedLabel: ReviewLabel | null;
   latestModelRunId: string | null;
+  latestModelThreshold: number | null;
+  latestModelDistanceToThreshold: number | null;
   disagreementFlags: string[];
   labeledAt: string | null;
   exampleProfileUrl: string | null;
@@ -114,6 +117,7 @@ const queueLabels: Record<QueueName, string> = {
   whitelisted: "Whitelisted",
   high_seen_count: "High seen count",
   notification_group: "Notification group",
+  uncertain_unlabeled: "Uncertain unlabeled",
   high_score_unlabeled: "High-score unlabeled",
   high_score_false_positive: "High-score false positives",
 };
@@ -251,6 +255,13 @@ function metadataRows(item: ReviewItem): Array<{ label: string; value: string | 
       value: item.latestModelPredictedLabel
         ? `${item.latestModelPredictedLabel} (${formatScore(item.maxModelScore)})`
         : "unscored",
+    },
+    {
+      label: "threshold",
+      value:
+        item.latestModelThreshold != null
+          ? `${formatScore(item.latestModelThreshold)} (Δ ${formatScore(item.latestModelDistanceToThreshold)})`
+          : "n/a",
     },
     { label: "model run", value: item.latestModelRunId ?? "n/a" },
     { label: "whitelisted", value: item.whitelisted ? "yes" : "no" },

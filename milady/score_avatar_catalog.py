@@ -16,6 +16,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint", help="Explicit checkpoint path. Defaults to cache/models/mobilenet_v3_small/<run-id>/best.pt")
     parser.add_argument("--threshold", type=float, default=None, help="Override decision threshold when writing predicted labels.")
     parser.add_argument("--cpu", action="store_true", help="Force CPU inference.")
+    parser.add_argument("--batch-size", type=int, default=256, help="Number of catalog images to score per chunk.")
     parser.add_argument("--limit", type=int, default=None)
     return parser.parse_args()
 
@@ -54,18 +55,40 @@ def main() -> None:
 
         created_at = now_iso()
         scored = 0
-        batch_paths: list[Path] = []
-        batch_rows = []
-        for row in rows:
-            path = resolve_repo_path(str(row["local_path"]))
-            if not path.exists():
-                continue
-            batch_paths.append(path)
-            batch_rows.append(row)
+        existing = 0
+        for offset in range(0, len(rows), max(1, args.batch_size)):
+            raw_batch = rows[offset : offset + max(1, args.batch_size)]
+            batch_paths: list[Path] = []
+            batch_rows = []
+            for row in raw_batch:
+                path = resolve_repo_path(str(row["local_path"]))
+                if not path.exists():
+                    continue
+                batch_paths.append(path)
+                batch_rows.append(row)
 
-        probabilities = probabilities_from_model(model, batch_paths, device, batch_size=64, connection=cache_connection)
-        for row, probability in zip(batch_rows, probabilities.tolist(), strict=True):
-            connection.execute(
+            if not batch_rows:
+                continue
+
+            probabilities = probabilities_from_model(
+                model,
+                batch_paths,
+                device,
+                batch_size=max(1, args.batch_size),
+                connection=cache_connection,
+            )
+            payload = [
+                (
+                    args.run_id,
+                    str(row["sha256"]),
+                    probability,
+                    "milady" if probability >= threshold else "not_milady",
+                    row["split"],
+                    created_at,
+                )
+                for row, probability in zip(batch_rows, probabilities.tolist(), strict=True)
+            ]
+            connection.executemany(
                 """
                 INSERT INTO model_scores (
                   run_id,
@@ -81,18 +104,16 @@ def main() -> None:
                   split = excluded.split,
                   created_at = excluded.created_at
                 """,
-                (
-                    args.run_id,
-                    str(row["sha256"]),
-                    probability,
-                    "milady" if probability >= threshold else "not_milady",
-                    row["split"],
-                    created_at,
-                ),
+                payload,
             )
-            scored += 1
+            connection.commit()
+            scored += len(payload)
+            existing = offset + len(raw_batch)
+            print(
+                f"[score] processed={min(existing, len(rows))}/{len(rows)} scored={scored}",
+                flush=True,
+            )
 
-        connection.commit()
         print(f"Scored {scored} image(s) for run {args.run_id}.")
     finally:
         cache_connection.close()
