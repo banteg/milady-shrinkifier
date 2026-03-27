@@ -281,6 +281,7 @@ function App() {
   const [batchAssignments, setBatchAssignments] = createSignal<BatchAssignment[]>([]);
   const [gridWidth, setGridWidth] = createSignal(0);
   let gridScrollRef: HTMLDivElement | undefined;
+  let gridResizeObserver: ResizeObserver | undefined;
 
   const summaryQuery = createQuery(() => ({
     queryKey: ["review", "summary"],
@@ -519,18 +520,30 @@ function App() {
     setActiveView("individual");
   }
 
+  function bindGridScrollRef(element: HTMLDivElement) {
+    gridScrollRef = element;
+    if (!gridResizeObserver) {
+      return;
+    }
+    setGridWidth(element.clientWidth);
+    gridResizeObserver.disconnect();
+    gridResizeObserver.observe(element);
+    queueMicrotask(() => gridVirtualizer.measure());
+  }
+
   onMount(() => {
-    const resizeObserver = new ResizeObserver((entries) => {
+    gridResizeObserver = new ResizeObserver((entries) => {
       const entry = entries[0];
       if (!entry) {
         return;
       }
       setGridWidth(entry.contentRect.width);
+      queueMicrotask(() => gridVirtualizer.measure());
     });
 
     if (gridScrollRef) {
       setGridWidth(gridScrollRef.clientWidth);
-      resizeObserver.observe(gridScrollRef);
+      gridResizeObserver.observe(gridScrollRef);
     }
 
     const handleKeyDown = async (event: KeyboardEvent) => {
@@ -580,7 +593,7 @@ function App() {
     window.addEventListener("keydown", handleKeyDown);
     onCleanup(() => {
       window.removeEventListener("keydown", handleKeyDown);
-      resizeObserver.disconnect();
+      gridResizeObserver?.disconnect();
     });
   });
 
@@ -812,9 +825,7 @@ function App() {
 
           <Show when={(gridQuery.data?.items.length ?? 0) > 0} fallback={<p class="empty-copy">No images for this view.</p>}>
             <div
-              ref={(element) => {
-                gridScrollRef = element;
-              }}
+              ref={bindGridScrollRef}
               class="grid-scroll"
             >
               <div class="grid-virtual-space" style={{ height: `${gridVirtualizer.getTotalSize()}px` }}>
