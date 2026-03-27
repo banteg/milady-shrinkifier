@@ -111,7 +111,9 @@ def ensure_layout() -> None:
 
 def connect_db(path: Path = CATALOG_PATH) -> sqlite3.Connection:
     ensure_layout()
-    connection = sqlite3.connect(path)
+    resolved_path = resolve_repo_path(path)
+    resolved_path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(str(resolved_path), timeout=30.0)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA journal_mode=WAL")
     connection.execute("PRAGMA foreign_keys=ON")
