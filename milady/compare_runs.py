@@ -10,6 +10,8 @@ import torch
 from .mobilenet_common import compute_metrics, create_model, load_dataset_entries, probabilities_from_model
 from .pipeline_common import MODEL_COMPARE_ROOT, MODEL_RUN_ROOT, SPLIT_ROOT, connect_offline_cache_db, ensure_layout
 
+HEADLINE_EVAL_POLICY = "manual_export_gold_only"
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Compare trained classifier checkpoints on the current dataset splits.")
@@ -48,6 +50,9 @@ def main() -> None:
             "device": device.type,
             "valSize": len(val_entries),
             "testSize": len(test_entries),
+            "evaluationPolicy": {
+                "headline": HEADLINE_EVAL_POLICY,
+            },
             "runIds": run_ids,
             "runs": {},
         }
@@ -96,6 +101,8 @@ def main() -> None:
                 "precisionFloor": precision_floor,
                 "valMetrics": val_metrics,
                 "testMetrics": test_metrics,
+                "valDiagnosticsBySource": diagnostic_metrics_by(val_entries, val_probabilities, threshold),
+                "testDiagnosticsBySource": diagnostic_metrics_by(test_entries, test_probabilities, threshold),
                 "falsePositiveCount": len(false_positives),
                 "falseNegativeCount": len(false_negatives),
                 "falsePositivesPath": str(false_positives_path),
@@ -181,6 +188,8 @@ def collect_errors(
                 "path": str(entry.path),
                 "label": entry.label,
                 "source": entry.source,
+                "labelSource": entry.label_source,
+                "labelTier": entry.label_tier,
                 "split": entry.split,
                 "probability": probability,
                 "threshold": threshold,
@@ -188,6 +197,31 @@ def collect_errors(
             }
         )
     return items
+
+
+def diagnostic_metrics_by(entries, probabilities: list[float], threshold: float) -> dict[str, dict[str, dict[str, float] | int | str]]:
+    diagnostics: dict[str, dict[str, dict[str, float] | int | str]] = {}
+    groups = {
+        "source": sorted({entry.source for entry in entries}),
+        "labelSource": sorted({entry.label_source for entry in entries}),
+        "labelTier": sorted({entry.label_tier for entry in entries}),
+    }
+    for group_name, values in groups.items():
+        grouped_metrics: dict[str, dict[str, float] | int | str] = {}
+        for value in values:
+            indices = [
+                index
+                for index, entry in enumerate(entries)
+                if getattr(entry, "source" if group_name == "source" else ("label_source" if group_name == "labelSource" else "label_tier")) == value
+            ]
+            if not indices:
+                continue
+            grouped_metrics[value] = {
+                "count": len(indices),
+                "metrics": compute_metrics([probabilities[index] for index in indices], [1 if entries[index].label == "milady" else 0 for index in indices], threshold),
+            }
+        diagnostics[group_name] = grouped_metrics
+    return diagnostics
 
 
 if __name__ == "__main__":

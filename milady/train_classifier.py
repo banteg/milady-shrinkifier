@@ -27,6 +27,8 @@ from .mobilenet_common import (
 )
 from .pipeline_common import MODEL_RUN_ROOT, SPLIT_ROOT, connect_offline_cache_db
 
+HEADLINE_EVAL_POLICY = "manual_export_gold_only"
+
 DEFAULT_WANDB_PROJECT = "milady-shrinkifier"
 DEFAULT_WANDB_ENTITY = "banteg-"
 
@@ -190,11 +192,18 @@ def main() -> None:
             "mean": MODEL_MEAN,
             "std": MODEL_STD,
             "precisionFloor": args.precision_floor,
+            "evaluationPolicy": {
+                "headline": HEADLINE_EVAL_POLICY,
+                "trainIncludesTrustedSynthetic": True,
+                "trainIncludesWeakLabels": True,
+            },
             "bestEpoch": best_epoch,
             "threshold": best_threshold,
             "history": history,
             "valMetrics": best_val_metrics,
             "testMetrics": test_metrics,
+            "valDiagnosticsBySource": diagnostic_metrics_by(entries=val_entries, probabilities=val_probabilities, threshold=best_threshold),
+            "testDiagnosticsBySource": diagnostic_metrics_by(entries=test_entries, probabilities=test_probabilities, threshold=best_threshold),
             "checkpointPath": str(checkpoint_path),
         }
         (run_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True))
@@ -207,10 +216,16 @@ def main() -> None:
                     "best/val_precision": best_val_metrics["precision"],
                     "best/val_recall": best_val_metrics["recall"],
                     "best/val_f1": best_val_metrics["f1"],
+                    "headline/val_precision": best_val_metrics["precision"],
+                    "headline/val_recall": best_val_metrics["recall"],
+                    "headline/val_f1": best_val_metrics["f1"],
                     "test/precision": test_metrics["precision"],
                     "test/recall": test_metrics["recall"],
                     "test/f1": test_metrics["f1"],
                     "test/accuracy": test_metrics["accuracy"],
+                    "headline/test_precision": test_metrics["precision"],
+                    "headline/test_recall": test_metrics["recall"],
+                    "headline/test_f1": test_metrics["f1"],
                 }
             )
             summary_artifact = wandb.Artifact(f"{args.run_id}-summary", type="training-summary")
@@ -226,10 +241,10 @@ def main() -> None:
             "[done] "
             f"best_epoch={best_epoch} "
             f"threshold={best_threshold:.4f} "
-            f"val_precision={best_val_metrics['precision']:.4f} "
-            f"val_recall={best_val_metrics['recall']:.4f} "
-            f"test_precision={test_metrics['precision']:.4f} "
-            f"test_recall={test_metrics['recall']:.4f}",
+            f"blind_val_precision={best_val_metrics['precision']:.4f} "
+            f"blind_val_recall={best_val_metrics['recall']:.4f} "
+            f"blind_test_precision={test_metrics['precision']:.4f} "
+            f"blind_test_recall={test_metrics['recall']:.4f}",
             flush=True,
         )
         print(json.dumps(summary, indent=2, sort_keys=True))
@@ -465,6 +480,31 @@ def format_duration(seconds: float) -> str:
     if minutes > 0:
         return f"{minutes}m{secs:02d}s"
     return f"{secs}s"
+
+
+def diagnostic_metrics_by(entries: list, probabilities: list[float], threshold: float) -> dict[str, dict[str, dict[str, float] | int | str]]:
+    diagnostics: dict[str, dict[str, dict[str, float] | int | str]] = {}
+    groups = {
+        "source": sorted({entry.source for entry in entries}),
+        "labelSource": sorted({entry.label_source for entry in entries}),
+        "labelTier": sorted({entry.label_tier for entry in entries}),
+    }
+    for group_name, values in groups.items():
+        grouped_metrics: dict[str, dict[str, float] | int | str] = {}
+        for value in values:
+            indices = [
+                index
+                for index, entry in enumerate(entries)
+                if getattr(entry, "source" if group_name == "source" else ("label_source" if group_name == "labelSource" else "label_tier")) == value
+            ]
+            if not indices:
+                continue
+            grouped_metrics[value] = {
+                "count": len(indices),
+                "metrics": compute_metrics([probabilities[index] for index in indices], [1 if entries[index].label == "milady" else 0 for index in indices], threshold),
+            }
+        diagnostics[group_name] = grouped_metrics
+    return diagnostics
 
 
 if __name__ == "__main__":
