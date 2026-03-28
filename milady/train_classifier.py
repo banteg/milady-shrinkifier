@@ -276,6 +276,11 @@ def main() -> None:
                 "trainIncludesTrustedSynthetic": True,
                 "trainIncludesWeakLabels": True,
             },
+            "datasetSplits": {
+                "train": split_summary(train_entries),
+                "val": split_summary(val_entries),
+                "test": split_summary(test_entries),
+            },
             "bestEpoch": best_epoch,
             "threshold": best_threshold,
             "history": history,
@@ -699,6 +704,27 @@ def diagnostic_metrics_by(entries: list, probabilities: list[float], threshold: 
             }
         diagnostics[group_name] = grouped_metrics
     return diagnostics
+
+
+def split_summary(entries: list) -> dict[str, object]:
+    return {
+        "total": len(entries),
+        "classCounts": {
+            "milady": sum(1 for entry in entries if entry.label == "milady"),
+            "not_milady": sum(1 for entry in entries if entry.label != "milady"),
+        },
+        "sourceCounts": count_by(entries, "source"),
+        "labelSourceCounts": count_by(entries, "label_source"),
+        "labelTierCounts": count_by(entries, "label_tier"),
+    }
+
+
+def count_by(entries: list, attribute: str) -> dict[str, int]:
+    values = sorted({str(getattr(entry, attribute)) for entry in entries})
+    return {
+        value: sum(1 for entry in entries if str(getattr(entry, attribute)) == value)
+        for value in values
+    }
 
 
 if __name__ == "__main__":
