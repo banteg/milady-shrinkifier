@@ -140,14 +140,8 @@ async function processTweet(tweet: HTMLElement): Promise<void> {
       revealed.delete(tweet);
     }
 
-    if (processed.get(tweet) === normalizedUrl && tweet.dataset.miladyShrinkifierState) {
-      applyMode(tweet, normalizedUrl);
-      return;
-    }
-
-    processed.set(tweet, normalizedUrl);
-
     if (author && settings.whitelistHandles.includes(author.handle)) {
+      processed.set(tweet, normalizedUrl);
       recordCollectedAvatar({
         normalizedUrl,
         originalUrl: avatar.currentSrc || avatar.src,
@@ -163,6 +157,13 @@ async function processTweet(tweet: HTMLElement): Promise<void> {
       delete tweet.dataset.miladyShrinkifierState;
       return;
     }
+
+    if (processed.get(tweet) === normalizedUrl && tweet.dataset.miladyShrinkifierState) {
+      applyMode(tweet, normalizedUrl);
+      return;
+    }
+
+    processed.set(tweet, normalizedUrl);
 
     tweet.dataset.miladyShrinkifierState = "miss";
     tweet.dataset.miladyShrinkifierDebug = "…";
