@@ -30,23 +30,6 @@ Keep the CDP attachment open:
 pnpm run debug:chrome:attach:keep-open
 ```
 
-## Alternate Profile Helpers
-
-Launch against a system Chrome profile named `Extension`:
-
-```bash
-pnpm run debug:chrome:launch-extension-profile
-```
-
-Legacy extension debug helpers:
-
-```bash
-pnpm run debug:extension
-pnpm run debug:extension:default-profile
-pnpm run debug:extension:extension-profile
-pnpm run debug:extension:seed-extension-profile
-```
-
 ## Paths
 
 - Runtime model artifacts live in `public/models/` and `public/generated/`.
