@@ -248,18 +248,19 @@ def collect_errors(
 
 def diagnostic_metrics_by(entries, probabilities: list[float], threshold: float) -> dict[str, dict[str, dict[str, float] | int | str]]:
     diagnostics: dict[str, dict[str, dict[str, float] | int | str]] = {}
-    groups = {
-        "source": sorted({entry.source for entry in entries}),
-        "labelSource": sorted({entry.label_source for entry in entries}),
-        "labelTier": sorted({entry.label_tier for entry in entries}),
+    group_fields = {
+        "source": "source",
+        "labelSource": "label_source",
+        "labelTier": "label_tier",
     }
-    for group_name, values in groups.items():
+    for group_name, field_name in group_fields.items():
+        values = sorted({str(getattr(entry, field_name)) for entry in entries})
         grouped_metrics: dict[str, dict[str, float] | int | str] = {}
         for value in values:
             indices = [
                 index
                 for index, entry in enumerate(entries)
-                if getattr(entry, "source" if group_name == "source" else ("label_source" if group_name == "labelSource" else "label_tier")) == value
+                if str(getattr(entry, field_name)) == value
             ]
             if not indices:
                 continue
