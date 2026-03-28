@@ -18,7 +18,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CACHE_ROOT = PROJECT_ROOT / "cache"
 COLLECTION_ROOT = CACHE_ROOT / "collections"
 COLLECTION_MANIFEST_PATH = COLLECTION_ROOT / "manifest.json"
-MILADY_MAKER_ROOT = COLLECTION_ROOT / "milady-maker"
 INGEST_ROOT = CACHE_ROOT / "ingest"
 EXPORT_ROOT = CACHE_ROOT / "exports" / "raw"
 AVATAR_ROOT = CACHE_ROOT / "avatars" / "files"

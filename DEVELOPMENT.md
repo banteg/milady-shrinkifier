@@ -67,7 +67,7 @@ Typical loop:
 uv run milady ingest
 uv run milady download-avatars
 uv run milady download-avatars --retry-failed
-uv run milady download-derivatives
+uv run milady download-collections
 uv run milady label-heuristic
 pnpm run build:review
 uv run milady review

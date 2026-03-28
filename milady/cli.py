@@ -9,7 +9,7 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "review": ("milady.review_avatars", "Run the local review app."),
     "ingest": ("milady.ingest_avatar_exports", "Ingest exported avatar manifests into the local catalog."),
     "download-avatars": ("milady.download_avatar_catalog", "Download avatar images from the local catalog."),
-    "download-derivatives": ("milady.download_derivative_samples", "Download positive samples from derivative collections."),
+    "download-collections": ("milady.download_collection_samples", "Download configured NFT collection samples."),
     "label-heuristic": ("milady.label_heuristic_matches", "Auto-label heuristic positives as milady."),
     "build-dataset": ("milady.build_training_dataset", "Materialize train/val/test splits."),
     "train": ("milady.train_classifier", "Train the MobileNetV3-Small classifier."),

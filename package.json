@@ -10,8 +10,6 @@
     "build:worker": "esbuild src/worker.ts --bundle --format=iife --platform=browser --target=es2022 --sourcemap --outfile=dist/worker.js",
     "build:content": "esbuild src/content.ts --bundle --format=iife --platform=browser --target=es2022 --sourcemap --outfile=dist/content.js",
     "dev": "vite build --watch",
-    "download:images": "tsx scripts/download-images.ts",
-    "download:images:aria2": "zsh scripts/download-images-aria2.sh",
     "debug:chrome:attach": "node scripts/attach-debug-chrome.mjs",
     "debug:chrome:attach:keep-open": "node scripts/attach-debug-chrome.mjs --keep-open",
     "debug:chrome:launch-local-profile": "node scripts/launch-debug-chrome.mjs --local-profile",

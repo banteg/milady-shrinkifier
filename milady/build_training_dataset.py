@@ -7,11 +7,10 @@ from pathlib import Path
 
 from sklearn.model_selection import StratifiedGroupKFold
 
-from .download_derivative_samples import COLLECTIONS as DERIVATIVE_COLLECTIONS
+from .download_collection_samples import COLLECTIONS as NFT_COLLECTIONS
 from .mobilenet_common import DatasetEntry, SPLIT_SEED, dataset_entries_to_jsonl
 from .pipeline_common import (
     COLLECTION_MANIFEST_PATH,
-    MILADY_MAKER_ROOT,
     SPLIT_MANIFEST_PATH,
     SPLIT_ROOT,
     connect_db,
@@ -24,11 +23,10 @@ from .pipeline_common import (
     write_json_file,
 )
 
-ENABLED_DERIVATIVE_SLUGS = frozenset(collection.slug for collection in DERIVATIVE_COLLECTIONS)
+COLLECTIONS_BY_SLUG = {collection.slug: collection for collection in NFT_COLLECTIONS}
 SOURCE_PRIORITY = {
     "export": 0,
-    "derivative": 1,
-    "official": 2,
+    "collection": 1,
 }
 LABEL_TIER_PRIORITY = {
     "gold": 0,
@@ -236,44 +234,19 @@ def build_sample_records(connection, cache_connection) -> list[SampleRecord]:
     samples: list[SampleRecord] = []
     processed = 0
 
-    official_paths = [
-        path
-        for path in sorted(MILADY_MAKER_ROOT.glob("*.png"))
-        if path.is_file() and path.stat().st_size > 0 and path.stem.isdigit()
-    ]
-    for path in official_paths:
+    for collection, token_id, path in load_collection_rows():
         fingerprint = get_file_fingerprint(cache_connection, path, 128)
         if not fingerprint.readable:
             continue
         samples.append(
             SampleRecord(
-                sample_id=f"official:{path.stem}",
+                sample_id=f"collection:{collection.slug}:{token_id}",
                 path=path,
                 label="milady",
-                source="official",
+                source=collection.source,
                 raw_sha=fingerprint.raw_sha,
                 pixel_digest=fingerprint.pixel_digest,
-                label_source="official_corpus",
-                label_tier="trusted",
-                sample_weight=1.0,
-                blind_eval_eligible=False,
-            )
-        )
-        processed = maybe_flush_fingerprint_cache(cache_connection, processed + 1)
-
-    for slug, token_id, path in load_derivative_rows():
-        fingerprint = get_file_fingerprint(cache_connection, path, 128)
-        if not fingerprint.readable:
-            continue
-        samples.append(
-            SampleRecord(
-                sample_id=f"derivative:{slug}:{token_id}",
-                path=path,
-                label="milady",
-                source=f"derivative:{slug}",
-                raw_sha=fingerprint.raw_sha,
-                pixel_digest=fingerprint.pixel_digest,
-                label_source="derivative_corpus",
+                label_source=collection.label_source,
                 label_tier="trusted",
                 sample_weight=1.0,
                 blind_eval_eligible=False,
@@ -321,7 +294,7 @@ def build_sample_records(connection, cache_connection) -> list[SampleRecord]:
     return samples
 
 
-def load_derivative_rows() -> list[tuple[str, int, Path]]:
+def load_collection_rows() -> list[tuple[object, int, Path]]:
     if not COLLECTION_MANIFEST_PATH.exists():
         return []
 
@@ -330,13 +303,14 @@ def load_derivative_rows() -> list[tuple[str, int, Path]]:
     if not isinstance(raw_collections, list):
         return []
 
-    rows: list[tuple[str, int, Path]] = []
+    rows: list[tuple[object, int, Path]] = []
     for collection in raw_collections:
         if not isinstance(collection, dict):
             continue
         slug = collection.get("slug")
         samples = collection.get("samples")
-        if not isinstance(slug, str) or not isinstance(samples, list) or slug not in ENABLED_DERIVATIVE_SLUGS:
+        spec = COLLECTIONS_BY_SLUG.get(slug) if isinstance(slug, str) else None
+        if spec is None or not isinstance(samples, list):
             continue
         for sample in samples:
             if not isinstance(sample, dict):
@@ -348,7 +322,7 @@ def load_derivative_rows() -> list[tuple[str, int, Path]]:
             path = resolve_repo_path(local_path)
             if not path.exists():
                 continue
-            rows.append((slug, token_id, path))
+            rows.append((spec, token_id, path))
     return rows
 
 
@@ -527,10 +501,8 @@ def sample_sort_key(sample: SampleRecord) -> tuple[int, str]:
     label_tier_priority = LABEL_TIER_PRIORITY.get(sample.label_tier, len(LABEL_TIER_PRIORITY))
     if sample.source == "export":
         priority = SOURCE_PRIORITY["export"]
-    elif sample.source.startswith("derivative:"):
-        priority = SOURCE_PRIORITY["derivative"]
     else:
-        priority = SOURCE_PRIORITY["official"]
+        priority = SOURCE_PRIORITY["collection"]
     return label_tier_priority, priority, sample.sample_id
 
 
