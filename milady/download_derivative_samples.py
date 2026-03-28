@@ -151,10 +151,6 @@ def main() -> None:
         existing_collections[collection.slug]
         for collection in COLLECTIONS
         if collection.slug in existing_collections
-    ] + [
-        payload
-        for slug, payload in sorted(existing_collections.items())
-        if slug not in {collection.slug for collection in COLLECTIONS}
     ]
     write_json_file(DERIVATIVE_MANIFEST_PATH, manifest_payload)
     print(f"Wrote derivative manifest to {DERIVATIVE_MANIFEST_PATH}")
