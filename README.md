@@ -44,13 +44,6 @@ Headline metrics are measured on the current blind test set of manually labeled 
 
 These numbers were re-evaluated on the same current blind set on March 28, 2026, so they are directly comparable across production model revisions.
 
-The current promoted run, `20260328T144735Z`, was trained on `17,878` images:
-
-- `9,999` official Milady images
-- `3,000` derivative positives (`2,000` Remilio, `1,000` Pixelady)
-- `4,729` manually labeled exported avatars
-- `150` weak heuristic labels
-
 The blind evaluation sets are manually labeled exported avatars only:
 
 - validation: `600` images (`27` positives, `573` negatives)
