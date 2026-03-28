@@ -16,7 +16,7 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "compare": ("milady.compare_runs", "Compare trained checkpoints on the current dataset splits."),
     "score": ("milady.score_avatar_catalog", "Score the local catalog with a trained classifier."),
     "export-onnx": ("milady.export_classifier_onnx", "Export a trained classifier to ONNX for the extension runtime."),
-    "check-pfp": ("milady.check_pfp_url", "Score a single profile image URL."),
+    "check-pfp": ("milady.check_pfp_url", "Score a single profile image URL or local image file."),
 }
 
 

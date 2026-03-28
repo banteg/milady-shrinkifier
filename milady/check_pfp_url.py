@@ -15,8 +15,8 @@ from .pipeline_common import MODEL_RUN_ROOT
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Score a single profile image URL with the current Milady classifier.")
-    parser.add_argument("url", help="Profile image URL to fetch and score.")
+    parser = argparse.ArgumentParser(description="Score a single profile image URL or local image file with the current Milady classifier.")
+    parser.add_argument("input", help="Profile image URL to fetch and score, or a local image file path.")
     parser.add_argument("--run-id", help="Training run id under cache/models/mobilenet_v3_small/. Defaults to the newest run with a summary.")
     parser.add_argument("--threshold", type=float, default=None, help="Override the decision threshold.")
     parser.add_argument("--timeout", type=float, default=30.0, help="HTTP timeout in seconds.")
@@ -39,23 +39,32 @@ def main() -> None:
 
     summary = json.loads(summary_path.read_text())
     threshold = float(args.threshold if args.threshold is not None else summary["threshold"])
-    normalized_url = normalize_profile_image_url(args.url)
 
     model = create_model(pretrained=False)
     model.load_state_dict(torch.load(checkpoint_path, map_location="cpu"))
     model.eval()
 
-    response = httpx.get(normalized_url, timeout=args.timeout, follow_redirects=True)
-    response.raise_for_status()
-    probability = infer_probability(model, response.content)
+    output: dict[str, object] = {
+        "input": args.input,
+        "runId": run_id,
+        "threshold": threshold,
+    }
+    local_path = Path(args.input).expanduser()
+    if local_path.exists() and local_path.is_file():
+        probability = infer_probability(model, local_path.read_bytes())
+        output["localPath"] = str(local_path.resolve())
+    else:
+        normalized_url = normalize_profile_image_url(args.input)
+        response = httpx.get(normalized_url, timeout=args.timeout, follow_redirects=True)
+        response.raise_for_status()
+        probability = infer_probability(model, response.content)
+        output["url"] = args.input
+        output["normalizedUrl"] = normalized_url
 
     print(
         json.dumps(
             {
-                "url": args.url,
-                "normalizedUrl": normalized_url,
-                "runId": run_id,
-                "threshold": threshold,
+                **output,
                 "probability": probability,
                 "matched": probability >= threshold,
             },

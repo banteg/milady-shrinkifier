@@ -7,7 +7,7 @@ pnpm run build
 pnpm run build:review
 pnpm run typecheck
 pnpm run test
-uv run milady check-pfp <avatar-url>
+uv run milady check-pfp <avatar-url-or-local-file>
 ```
 
 ## Chrome Debugging
