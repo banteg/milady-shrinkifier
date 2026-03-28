@@ -11,7 +11,7 @@ from pathlib import Path
 
 import httpx
 
-from .pipeline_common import DERIVATIVE_MANIFEST_PATH, DERIVATIVE_ROOT, guess_extension, write_json_file
+from .pipeline_common import DERIVATIVE_MANIFEST_PATH, DERIVATIVE_ROOT, guess_extension, read_json_file, write_json_file
 
 IPFS_GATEWAYS = (
     "https://ipfs.io/ipfs/",
@@ -51,6 +51,14 @@ COLLECTIONS: tuple[DerivativeCollection, ...] = (
         target_count=1_000,
         metadata_url_template="ipfs://bafybeigd7557iwardhnwg5kbmg2s7tmuxqkstjeoixu7wunooiywbb3jqq/{token_id}",
     ),
+    DerivativeCollection(
+        slug="schizoposters",
+        name="SchizoPosters",
+        contract="0xbfe47d6d4090940d1c7a0066b63d23875e3e2ac5",
+        total_supply=5_554,
+        target_count=1_000,
+        asset_page_template="https://opensea.io/assets/ethereum/0xbfe47d6d4090940d1c7a0066b63d23875e3e2ac5/{token_id}",
+    ),
 )
 
 
@@ -86,6 +94,12 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     selected = [collection for collection in COLLECTIONS if not args.collections or collection.slug in args.collections]
+    existing_manifest = load_existing_manifest()
+    existing_collections = {
+        str(collection["slug"]): collection
+        for collection in existing_manifest.get("collections", [])
+        if isinstance(collection, dict) and isinstance(collection.get("slug"), str)
+    }
     manifest_payload: dict[str, object] = {
         "version": 1,
         "generatedAt": None,
@@ -109,40 +123,47 @@ def main() -> None:
             successful_results = sorted((result for result in results if result.success), key=lambda result: result.token_id)
             failed_results = sorted((result for result in results if not result.success), key=lambda result: result.token_id)
 
-            manifest_payload["collections"].append(
-                {
-                    "slug": collection.slug,
-                    "name": collection.name,
-                    "contract": collection.contract,
-                    "totalSupply": collection.total_supply,
-                    "targetCount": collection.target_count,
-                    "sampleCount": len(token_ids),
-                    "downloadedCount": len(successful_results),
-                    "failedCount": len(failed_results),
-                    "samples": [
-                        {
-                            "tokenId": result.token_id,
-                            "localPath": result.local_path,
-                            "imageUrl": result.image_url,
-                            "metadataUrl": result.metadata_url,
-                        }
-                        for result in successful_results
-                    ],
-                    "failures": [
-                        {
-                            "tokenId": result.token_id,
-                            "error": result.error,
-                        }
-                        for result in failed_results
-                    ],
-                }
-            )
+            existing_collections[collection.slug] = {
+                "slug": collection.slug,
+                "name": collection.name,
+                "contract": collection.contract,
+                "totalSupply": collection.total_supply,
+                "targetCount": collection.target_count,
+                "sampleCount": len(token_ids),
+                "downloadedCount": len(successful_results),
+                "failedCount": len(failed_results),
+                "samples": [
+                    {
+                        "tokenId": result.token_id,
+                        "localPath": result.local_path,
+                        "imageUrl": result.image_url,
+                        "metadataUrl": result.metadata_url,
+                    }
+                    for result in successful_results
+                ],
+                "failures": [
+                    {
+                        "tokenId": result.token_id,
+                        "error": result.error,
+                    }
+                    for result in failed_results
+                ],
+            }
             print(
                 f"{collection.slug}: downloaded {len(successful_results)}/{len(token_ids)} "
                 f"(target {min(collection.target_count, collection.total_supply)}, failed {len(failed_results)})"
             )
 
     manifest_payload["generatedAt"] = datetime.now(UTC).isoformat()
+    manifest_payload["collections"] = [
+        existing_collections[collection.slug]
+        for collection in COLLECTIONS
+        if collection.slug in existing_collections
+    ] + [
+        payload
+        for slug, payload in sorted(existing_collections.items())
+        if slug not in {collection.slug for collection in COLLECTIONS}
+    ]
     write_json_file(DERIVATIVE_MANIFEST_PATH, manifest_payload)
     print(f"Wrote derivative manifest to {DERIVATIVE_MANIFEST_PATH}")
 
@@ -154,6 +175,20 @@ def sample_token_ids(collection: DerivativeCollection) -> list[int]:
         return token_ids
     rng = random.Random(f"{collection.slug}:{collection.total_supply}:{sample_count}:v1")
     return sorted(rng.sample(token_ids, sample_count))
+
+
+def load_existing_manifest() -> dict[str, object]:
+    if not DERIVATIVE_MANIFEST_PATH.exists():
+        return {"version": 1, "generatedAt": None, "collections": []}
+    try:
+        payload = read_json_file(DERIVATIVE_MANIFEST_PATH)
+    except (OSError, ValueError, TypeError):
+        return {"version": 1, "generatedAt": None, "collections": []}
+    if not isinstance(payload, dict):
+        return {"version": 1, "generatedAt": None, "collections": []}
+    if not isinstance(payload.get("collections"), list):
+        payload["collections"] = []
+    return payload
 
 
 def download_token(client: httpx.Client, collection: DerivativeCollection, token_id: int, force: bool) -> DownloadResult:
