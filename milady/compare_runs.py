@@ -7,10 +7,11 @@ from pathlib import Path
 
 import torch
 
-from .mobilenet_common import compute_metrics, create_model, load_dataset_entries, probabilities_from_model
-from .pipeline_common import MODEL_COMPARE_ROOT, MODEL_RUN_ROOT, SPLIT_ROOT, connect_offline_cache_db, ensure_layout
+from .mobilenet_common import DatasetEntry, compute_metrics, create_model, load_dataset_entries, probabilities_from_model
+from .pipeline_common import MODEL_COMPARE_ROOT, MODEL_RUN_ROOT, SPLIT_MANIFEST_PATH, SPLIT_ROOT, connect_offline_cache_db, ensure_layout, read_json_file
 
 HEADLINE_EVAL_POLICY = "manual_export_gold_only"
+ALL_MANUAL_EVAL_POLICY = "all_manual_export_labels"
 
 
 def parse_args() -> argparse.Namespace:
@@ -19,6 +20,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--cpu", action="store_true", help="Force CPU evaluation.")
     parser.add_argument("--output-dir", type=Path, help="Optional output directory. Defaults under cache/models/.../compare.")
+    parser.add_argument(
+        "--eval-set",
+        choices=("blind", "all-manual"),
+        default="blind",
+        help="Evaluation population: blind val/test splits, or all deduped manually labeled exported avatars.",
+    )
     return parser.parse_args()
 
 
@@ -35,10 +42,9 @@ def main() -> None:
     device = choose_device(args.cpu)
     cache_connection = connect_offline_cache_db()
     try:
-        val_entries = load_dataset_entries(SPLIT_ROOT / "val.jsonl")
-        test_entries = load_dataset_entries(SPLIT_ROOT / "test.jsonl")
+        val_entries, test_entries, evaluation_policy = load_evaluation_entries(args.eval_set)
         if not val_entries or not test_entries:
-            raise SystemExit("Missing val/test split files. Run `uv run milady build-dataset` first.")
+            raise SystemExit("Missing evaluation entries. Run `uv run milady build-dataset` first.")
         print(
             f"[compare] device={device.type} runs={len(run_ids)} val={len(val_entries)} test={len(test_entries)}",
             flush=True,
@@ -51,7 +57,7 @@ def main() -> None:
             "valSize": len(val_entries),
             "testSize": len(test_entries),
             "evaluationPolicy": {
-                "headline": HEADLINE_EVAL_POLICY,
+                "headline": evaluation_policy,
             },
             "runIds": run_ids,
             "runs": {},
@@ -132,6 +138,47 @@ def default_output_dir(run_ids: list[str]) -> Path:
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     slug = "__".join(run_ids)
     return MODEL_COMPARE_ROOT / f"{stamp}__{slug}"
+
+
+def load_evaluation_entries(eval_set: str) -> tuple[list, list, str]:
+    if eval_set == "blind":
+        val_entries = load_dataset_entries(SPLIT_ROOT / "val.jsonl")
+        test_entries = load_dataset_entries(SPLIT_ROOT / "test.jsonl")
+        return val_entries, test_entries, HEADLINE_EVAL_POLICY
+    if eval_set == "all-manual":
+        entries = load_all_manual_export_entries()
+        return entries, entries, ALL_MANUAL_EVAL_POLICY
+    raise SystemExit(f"Unknown eval set: {eval_set}")
+
+
+def load_all_manual_export_entries() -> list:
+    if not SPLIT_MANIFEST_PATH.exists():
+        return []
+    manifest = read_json_file(SPLIT_MANIFEST_PATH)
+    groups = manifest.get("groups", [])
+    entries = []
+    for group in groups:
+        canonical = group.get("canonical", {})
+        if canonical.get("source") != "export":
+            continue
+        if canonical.get("labelSource") != "manual":
+            continue
+        label = str(group.get("label"))
+        if label not in ("milady", "not_milady"):
+            continue
+        entries.append(
+            DatasetEntry(
+                sample_id=str(canonical["id"]),
+                path=Path(str(canonical["path"])),
+                label=label,
+                source="export",
+                split="all-manual",
+                label_source="manual",
+                label_tier=str(canonical.get("labelTier") or "gold"),
+                sample_weight=float(canonical.get("sampleWeight", 1.0)),
+            )
+        )
+    return entries
 
 
 def choose_device(force_cpu: bool) -> torch.device:
