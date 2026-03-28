@@ -36,6 +36,8 @@ There is no Chrome Web Store release. Install from [GitHub Releases](https://git
 
 Headline metrics are measured on the current blind test set of manually labeled exported avatars only. Training uses a mix of Milady Maker, selected derivatives, and manually tagged real-world avatars, but those synthetic sources are kept out of the main score.
 
+Here, **precision** means “when the extension filters a post, how often it is right,” while **recall** means “of the Milady-style avatars in the test set, how many it catches.”
+
 | Promoted run | Train / val / test | Training mix | Precision | Recall | False positives | False negatives |
 | --- | --- | --- | --- | --- | --- | --- |
 | `20260327T142224Z` | `10,781 / 1,346 / 1,350` | Milady Maker + `2,596` manually tagged non-Milady avatars | `0.8333` | `0.6250` | `2` | `6` |
