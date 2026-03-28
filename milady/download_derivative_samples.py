@@ -51,14 +51,6 @@ COLLECTIONS: tuple[DerivativeCollection, ...] = (
         target_count=1_000,
         metadata_url_template="ipfs://bafybeigd7557iwardhnwg5kbmg2s7tmuxqkstjeoixu7wunooiywbb3jqq/{token_id}",
     ),
-    DerivativeCollection(
-        slug="schizoposters",
-        name="SchizoPosters",
-        contract="0xbfe47d6d4090940d1c7a0066b63d23875e3e2ac5",
-        total_supply=5_554,
-        target_count=1_000,
-        asset_page_template="https://opensea.io/assets/ethereum/0xbfe47d6d4090940d1c7a0066b63d23875e3e2ac5/{token_id}",
-    ),
 )
 
 
