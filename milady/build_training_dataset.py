@@ -257,7 +257,7 @@ def build_sample_records(connection, cache_connection) -> list[SampleRecord]:
     exported_rows = connection.execute(
         """
         SELECT sha256, local_path, label
-             , COALESCE(label_source, 'unknown') AS label_source
+             , label_source
         FROM images
         WHERE label IN ('milady', 'not_milady')
           AND local_path IS NOT NULL
@@ -267,11 +267,11 @@ def build_sample_records(connection, cache_connection) -> list[SampleRecord]:
     for row in exported_rows:
         path = resolve_repo_path(str(row["local_path"]))
         if not path.exists():
-            continue
+            raise SystemExit(f"Missing exported avatar file: {path}")
+        label_source = str(row["label_source"])
         fingerprint = get_file_fingerprint(cache_connection, path, 128)
         if not fingerprint.readable:
-            continue
-        label_source = str(row["label_source"])
+            raise SystemExit(f"Unreadable exported avatar file: {path}")
         label_tier = label_tier_for_export_label_source(label_source)
         samples.append(
             SampleRecord(
@@ -296,32 +296,24 @@ def build_sample_records(connection, cache_connection) -> list[SampleRecord]:
 
 def load_collection_rows() -> list[tuple[object, int, Path]]:
     if not COLLECTION_MANIFEST_PATH.exists():
-        return []
+        raise SystemExit("Missing collection manifest. Run `uv run milady download-collections` first.")
 
     manifest = read_json_file(COLLECTION_MANIFEST_PATH)
-    raw_collections = manifest.get("collections")
-    if not isinstance(raw_collections, list):
-        return []
+    raw_collections = manifest["collections"]
 
     rows: list[tuple[object, int, Path]] = []
     for collection in raw_collections:
-        if not isinstance(collection, dict):
-            continue
-        slug = collection.get("slug")
-        samples = collection.get("samples")
-        spec = COLLECTIONS_BY_SLUG.get(slug) if isinstance(slug, str) else None
-        if spec is None or not isinstance(samples, list):
-            continue
+        slug = str(collection["slug"])
+        samples = collection["samples"]
+        spec = COLLECTIONS_BY_SLUG.get(slug)
+        if spec is None:
+            raise SystemExit(f"Unknown collection in manifest: {slug}")
         for sample in samples:
-            if not isinstance(sample, dict):
-                continue
-            token_id = sample.get("tokenId")
-            local_path = sample.get("localPath")
-            if not isinstance(token_id, int) or not isinstance(local_path, str):
-                continue
+            token_id = int(sample["tokenId"])
+            local_path = str(sample["localPath"])
             path = resolve_repo_path(local_path)
             if not path.exists():
-                continue
+                raise SystemExit(f"Missing collection sample file: {path}")
             rows.append((spec, token_id, path))
     return rows
 

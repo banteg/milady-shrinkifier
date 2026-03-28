@@ -134,9 +134,9 @@ def load_dataset_entries(path: Path) -> list[DatasetEntry]:
                 label=str(payload["label"]),
                 source=str(payload["source"]),
                 split=str(payload["split"]),
-                label_source=str(payload.get("labelSource") or "unknown"),
-                label_tier=str(payload.get("labelTier") or "unknown"),
-                sample_weight=float(payload.get("sampleWeight", 1.0)),
+                label_source=str(payload["labelSource"]),
+                label_tier=str(payload["labelTier"]),
+                sample_weight=float(payload["sampleWeight"]),
             )
         )
     return entries

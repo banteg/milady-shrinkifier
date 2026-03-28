@@ -153,17 +153,17 @@ def load_evaluation_entries(eval_set: str) -> tuple[list, list, str]:
 
 def load_all_manual_export_entries() -> list:
     if not SPLIT_MANIFEST_PATH.exists():
-        return []
+        raise SystemExit("Missing split manifest. Run `uv run milady build-dataset` first.")
     manifest = read_json_file(SPLIT_MANIFEST_PATH)
-    groups = manifest.get("groups", [])
+    groups = manifest["groups"]
     entries = []
     for group in groups:
-        canonical = group.get("canonical", {})
-        if canonical.get("source") != "export":
+        canonical = group["canonical"]
+        if canonical["source"] != "export":
             continue
-        if canonical.get("labelSource") != "manual":
+        if canonical["labelSource"] != "manual":
             continue
-        label = str(group.get("label"))
+        label = str(group["label"])
         if label not in ("milady", "not_milady"):
             continue
         entries.append(
@@ -174,8 +174,8 @@ def load_all_manual_export_entries() -> list:
                 source="export",
                 split="all-manual",
                 label_source="manual",
-                label_tier=str(canonical.get("labelTier") or "gold"),
-                sample_weight=float(canonical.get("sampleWeight", 1.0)),
+                label_tier=str(canonical["labelTier"]),
+                sample_weight=float(canonical["sampleWeight"]),
             )
         )
     return entries

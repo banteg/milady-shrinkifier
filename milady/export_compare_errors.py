@@ -43,9 +43,7 @@ def main() -> None:
         raise SystemExit(f"Compare summary not found: {summary_path}")
 
     summary = read_json_file(summary_path)
-    runs = summary.get("runs")
-    if not isinstance(runs, dict):
-        raise SystemExit(f"Invalid compare summary: {summary_path}")
+    runs = summary["runs"]
 
     selected_run_ids = [run_id for run_id in runs.keys() if not args.run_ids or run_id in args.run_ids]
     if not selected_run_ids:
@@ -56,9 +54,7 @@ def main() -> None:
 
     exported = 0
     for run_id in selected_run_ids:
-        run_summary = runs.get(run_id)
-        if not isinstance(run_summary, dict):
-            continue
+        run_summary = runs[run_id]
         false_positive_path = Path(str(run_summary["falsePositivesPath"]))
         false_negative_path = Path(str(run_summary["falseNegativesPath"]))
         exported += export_error_set(run_id, "false_positives", false_positive_path, output_dir, args.mode)
@@ -88,8 +84,6 @@ def export_error_set(
     mode: str,
 ) -> int:
     items = read_json_file(manifest_path)
-    if not isinstance(items, list):
-        raise SystemExit(f"Invalid error manifest: {manifest_path}")
 
     category_dir = output_dir / run_id / category
     category_dir.mkdir(parents=True, exist_ok=True)
@@ -97,13 +91,11 @@ def export_error_set(
 
     exported = 0
     for index, item in enumerate(items, start=1):
-        if not isinstance(item, dict):
-            continue
         source_path = Path(str(item["path"]))
         if not source_path.exists():
-            continue
-        probability = float(item.get("probability", 0.0))
-        sample_id = str(item.get("id", source_path.stem)).replace(":", "__")
+            raise SystemExit(f"Missing compare source image: {source_path}")
+        probability = float(item["probability"])
+        sample_id = str(item["id"]).replace(":", "__")
         target_name = f"{index:03d}__p{probability:.3f}__{sample_id}{source_path.suffix.lower()}"
         target_path = category_dir / target_name
         materialize_file(source_path, target_path, mode)
