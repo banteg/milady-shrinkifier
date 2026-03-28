@@ -120,6 +120,7 @@ async function processTweet(tweet: HTMLElement): Promise<void> {
     const avatar = findAvatar(tweet);
     const author = findAuthor(tweet);
     if (!avatar) {
+      setWhitelistState(tweet, false);
       tweet.dataset.miladyShrinkifierState = "miss";
       delete tweet.dataset.miladyShrinkifierDebug;
       applyMode(tweet);
@@ -128,6 +129,7 @@ async function processTweet(tweet: HTMLElement): Promise<void> {
     }
 
     if (!avatar.currentSrc && !avatar.src) {
+      setWhitelistState(tweet, false);
       tweet.dataset.miladyShrinkifierState = "miss";
       delete tweet.dataset.miladyShrinkifierDebug;
       applyMode(tweet);
@@ -136,26 +138,10 @@ async function processTweet(tweet: HTMLElement): Promise<void> {
     }
 
     const normalizedUrl = normalizeProfileImageUrl(avatar.currentSrc || avatar.src);
+    const isWhitelisted = author ? settings.whitelistHandles.includes(author.handle) : false;
+    setWhitelistState(tweet, isWhitelisted);
     if (revealed.get(tweet) && revealed.get(tweet) !== normalizedUrl) {
       revealed.delete(tweet);
-    }
-
-    if (author && settings.whitelistHandles.includes(author.handle)) {
-      processed.set(tweet, normalizedUrl);
-      recordCollectedAvatar({
-        normalizedUrl,
-        originalUrl: avatar.currentSrc || avatar.src,
-        author,
-        whitelisted: true,
-        exampleTweetUrl: findTweetUrl(tweet),
-        exampleNotificationUrl: null,
-        sourceSurface: "tweet",
-      });
-      revealed.delete(tweet);
-      clearEffects(tweet);
-      delete tweet.dataset.miladyShrinkifier;
-      delete tweet.dataset.miladyShrinkifierState;
-      return;
     }
 
     if (processed.get(tweet) === normalizedUrl && tweet.dataset.miladyShrinkifierState) {
@@ -179,7 +165,7 @@ async function processTweet(tweet: HTMLElement): Promise<void> {
       normalizedUrl,
       originalUrl: avatar.currentSrc || avatar.src,
       author,
-      whitelisted: false,
+      whitelisted: isWhitelisted,
       exampleTweetUrl: findTweetUrl(tweet),
       exampleNotificationUrl: null,
       sourceSurface: "tweet",
@@ -188,8 +174,10 @@ async function processTweet(tweet: HTMLElement): Promise<void> {
     if (result.matched) {
       tweet.dataset.miladyShrinkifier = result.source ?? "match";
       tweet.dataset.miladyShrinkifierState = "match";
-      incrementMatchStats(result);
-      if (author) {
+      if (!isWhitelisted) {
+        incrementMatchStats(result);
+      }
+      if (author && !isWhitelisted) {
         recordMatchedAccount(author.handle, author.displayName);
       }
       applyMode(tweet, normalizedUrl);
@@ -206,6 +194,7 @@ async function processTweet(tweet: HTMLElement): Promise<void> {
     applyMode(tweet, normalizedUrl);
   } catch (error) {
     console.error("Milady post processing failed", error);
+    setWhitelistState(tweet, false);
     clearEffects(tweet);
     delete tweet.dataset.miladyShrinkifier;
     tweet.dataset.miladyShrinkifierState = "miss";
@@ -317,6 +306,13 @@ function findAuthor(tweet: HTMLElement): { handle: string; displayName: string |
 function applyMode(tweet: HTMLElement, normalizedUrl?: string): void {
   clearVisualState(tweet);
   const isMatch = tweet.dataset.miladyShrinkifierState === "match";
+  const isWhitelisted = tweet.dataset.miladyShrinkifierWhitelisted === "true";
+
+  if (isWhitelisted && settings.mode !== "debug") {
+    clearPlaceholder(tweet);
+    tweet.style.display = "";
+    return;
+  }
 
   switch (settings.mode) {
     case "hide":
@@ -367,6 +363,11 @@ function clearVisualState(tweet: HTMLElement): void {
 }
 
 function applyDebugState(tweet: HTMLElement): void {
+  if (tweet.dataset.miladyShrinkifierWhitelisted === "true") {
+    tweet.dataset.miladyShrinkifierEffect = "debug-exempt";
+    return;
+  }
+
   if (tweet.dataset.miladyShrinkifierState === "match") {
     tweet.dataset.miladyShrinkifierEffect = "debug-match";
     return;
@@ -413,6 +414,15 @@ function clearPlaceholder(tweet: HTMLElement): void {
   }
 }
 
+function setWhitelistState(tweet: HTMLElement, whitelisted: boolean): void {
+  if (whitelisted) {
+    tweet.dataset.miladyShrinkifierWhitelisted = "true";
+    return;
+  }
+
+  delete tweet.dataset.miladyShrinkifierWhitelisted;
+}
+
 function injectStyles(): void {
   if (document.getElementById(STYLE_ID)) {
     return;
@@ -432,8 +442,13 @@ function injectStyles(): void {
       position: relative !important;
     }
 
+    [data-milady-shrinkifier-effect="debug-exempt"] {
+      position: relative !important;
+    }
+
     [data-milady-shrinkifier-effect="debug-match"]::after,
-    [data-milady-shrinkifier-effect="debug-miss"]::after {
+    [data-milady-shrinkifier-effect="debug-miss"]::after,
+    [data-milady-shrinkifier-effect="debug-exempt"]::after {
       content: "";
       position: absolute;
       inset: 0;
@@ -444,7 +459,8 @@ function injectStyles(): void {
     }
 
     [data-milady-shrinkifier-effect="debug-match"]::before,
-    [data-milady-shrinkifier-effect="debug-miss"]::before {
+    [data-milady-shrinkifier-effect="debug-miss"]::before,
+    [data-milady-shrinkifier-effect="debug-exempt"]::before {
       content: attr(data-milady-shrinkifier-debug);
       position: absolute;
       top: 6px;
@@ -467,6 +483,10 @@ function injectStyles(): void {
 
     [data-milady-shrinkifier-effect="debug-miss"]::after {
       border-color: rgba(46, 204, 113, 0.75);
+    }
+
+    [data-milady-shrinkifier-effect="debug-exempt"]::after {
+      border-color: rgba(52, 152, 219, 0.85);
     }
 
     .milady-shrinkifier-placeholder {
