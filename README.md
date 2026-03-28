@@ -45,7 +45,7 @@ All scores come from a blind set of manually labeled avatars. Synthetic training
 | --- | --- | --- | --- |
 | `20260327T142224Z` | Milady Maker + `2,596` manually tagged avatars | `0.8333` | `0.6250` |
 | `20260327T212453Z` | + Remilio, Pixelady + `2,967` manually tagged avatars | `1.0000` | `0.6875` |
-| `20260328T144735Z` | + `4,729` manually tagged avatars | `1.0000` | `0.8125` |
+| `20260328T144735Z` | + `5,715` manually tagged avatars | `1.0000` | `0.8125` |
 
 All rows were re-evaluated on the same blind set on March 28, 2026, so they are directly comparable.
 
