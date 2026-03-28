@@ -180,23 +180,39 @@ def choose_threshold(probabilities: list[float], labels: list[int], precision_fl
     if not probabilities:
         return 0.995, compute_metrics(probabilities, labels, 0.995)
 
-    candidates = sorted({0.0, 1.0, *probabilities}, reverse=True)
-    best_threshold = candidates[0]
-    best_metrics = compute_metrics(probabilities, labels, best_threshold)
-    best_recall = -1.0
+    candidates = sorted({0.0, 1.0, *probabilities})
+    scored_candidates = [
+        (float(threshold), compute_metrics(probabilities, labels, float(threshold)))
+        for threshold in candidates
+    ]
+    passing_candidates = [
+        (threshold, metrics)
+        for threshold, metrics in scored_candidates
+        if metrics["precision"] >= precision_floor
+    ]
 
-    for threshold in candidates:
-        metrics = compute_metrics(probabilities, labels, threshold)
-        if metrics["precision"] >= precision_floor and metrics["recall"] >= best_recall:
-            best_threshold = threshold
-            best_metrics = metrics
-            best_recall = metrics["recall"]
+    if passing_candidates:
+        best_threshold, best_metrics = max(
+            passing_candidates,
+            key=lambda item: (
+                item[1]["recall"],
+                item[1]["precision"],
+                item[1]["f1"],
+                item[0],
+            ),
+        )
+        return best_threshold, best_metrics
 
-    if best_recall < 0:
-        best_threshold = max(candidates)
-        best_metrics = max((compute_metrics(probabilities, labels, threshold) for threshold in candidates), key=lambda metrics: metrics["precision"])
-
-    return float(best_threshold), best_metrics
+    best_threshold, best_metrics = max(
+        scored_candidates,
+        key=lambda item: (
+            item[1]["precision"],
+            item[1]["recall"],
+            item[1]["f1"],
+            item[0],
+        ),
+    )
+    return best_threshold, best_metrics
 
 
 def score_logits_to_probabilities(logits: torch.Tensor) -> torch.Tensor:

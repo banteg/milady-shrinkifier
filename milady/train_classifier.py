@@ -4,7 +4,6 @@ import argparse
 import json
 import os
 import random
-from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 from time import perf_counter
@@ -43,8 +42,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=1337)
     parser.add_argument("--num-workers", type=int, default=default_num_workers())
     parser.add_argument("--prefetch-factor", type=int, default=4)
-    parser.add_argument("--amp", choices=("auto", "on", "off"), default="auto")
-    parser.add_argument("--compile", dest="compile_mode", choices=("auto", "on", "off"), default="auto")
     parser.add_argument("--head-warmup-epochs", type=int, default=2)
     parser.add_argument("--scheduler", choices=("onecycle", "cosine", "off"), default="cosine")
     parser.add_argument("--head-learning-rate", type=float, help="Optional LR for classifier-head warmup. Defaults to learning rate.")
@@ -81,7 +78,6 @@ def main() -> None:
 
     seed_everything(args.seed)
     device = choose_device(args.cpu)
-    amp_enabled = resolve_amp_enabled(args.amp, device)
     head_warmup_epochs = max(0, min(args.head_warmup_epochs, args.epochs))
     finetune_epochs = max(0, args.epochs - head_warmup_epochs)
     head_learning_rate = args.head_learning_rate if args.head_learning_rate is not None else args.learning_rate
@@ -93,14 +89,10 @@ def main() -> None:
         **dataloader_kwargs(args, device),
     )
     model = create_model(pretrained=True).to(device)
-    compile_enabled = resolve_compile_enabled(args.compile_mode, device)
-    if compile_enabled:
-        model = torch.compile(model)
     set_trainable_parameters(model, head_only=head_warmup_epochs > 0)
     optimizer = create_optimizer(model, args.weight_decay, head_learning_rate if head_warmup_epochs > 0 else args.learning_rate)
     scheduler = create_scheduler(args.scheduler, optimizer, args.learning_rate, len(train_loader), finetune_epochs) if head_warmup_epochs == 0 else None
     criterion = build_loss(train_entries, args.label_smoothing).to(device)
-    grad_scaler = torch.amp.GradScaler("cuda", enabled=amp_enabled and device.type == "cuda")
     run_dir = MODEL_RUN_ROOT / args.run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     cache_connection = connect_offline_cache_db()
@@ -112,8 +104,6 @@ def main() -> None:
             val_entries,
             test_entries,
             run_dir,
-            amp_enabled,
-            compile_enabled,
             head_warmup_epochs,
             head_learning_rate,
             finetune_epochs,
@@ -125,15 +115,13 @@ def main() -> None:
             val_entries,
             test_entries,
             run_dir,
-            amp_enabled,
-            compile_enabled,
             head_warmup_epochs,
             head_learning_rate,
         )
 
         best_state: dict[str, torch.Tensor] | None = None
         best_threshold = 0.995
-        best_recall = -1.0
+        best_selection_key = (-1.0, -1.0, -1.0, -1.0)
         best_epoch = -1
         best_val_metrics: dict[str, float] | None = None
         history: list[dict[str, float | int]] = []
@@ -167,8 +155,6 @@ def main() -> None:
                 args.log_every,
                 wandb_run,
                 global_step,
-                amp_enabled,
-                grad_scaler,
                 scheduler,
                 phase,
             )
@@ -204,7 +190,13 @@ def main() -> None:
                         "timing/total_elapsed_seconds": perf_counter() - training_started_at,
                     }
                 )
-            improved = threshold_metrics["recall"] > best_recall
+            selection_key = (
+                threshold_metrics["recall"],
+                threshold_metrics["precision"],
+                threshold_metrics["f1"],
+                threshold,
+            )
+            improved = selection_key > best_selection_key
             stale_after_epoch = 0 if improved else (stale_epochs + 1 if phase == "finetune" else stale_epochs)
             overall_eta_seconds = estimate_overall_eta(args.epochs, epoch, completed_epoch_durations)
             print_epoch_summary(
@@ -226,14 +218,14 @@ def main() -> None:
             if improved:
                 best_state = {key: value.detach().cpu().clone() for key, value in model.state_dict().items()}
                 best_threshold = threshold
-                best_recall = threshold_metrics["recall"]
+                best_selection_key = selection_key
                 best_epoch = epoch
                 best_val_metrics = threshold_metrics
                 if phase == "finetune":
                     stale_epochs = 0
                 print(
                     f"[epoch {epoch}/{args.epochs}] new best checkpoint "
-                    f"(recall={best_recall:.4f}, threshold={best_threshold:.4f})",
+                    f"(recall={threshold_metrics['recall']:.4f}, threshold={best_threshold:.4f})",
                     flush=True,
                 )
             else:
@@ -254,6 +246,8 @@ def main() -> None:
         print(f"[checkpoint] saved best weights to {checkpoint_path}", flush=True)
 
         model.load_state_dict(best_state)
+        val_probabilities, val_labels = evaluate(model, val_entries, device, args.batch_size, cache_connection)
+        best_threshold, best_val_metrics = choose_threshold(val_probabilities, val_labels, args.precision_floor)
         print("[test] evaluating best checkpoint on test split", flush=True)
         test_probabilities, test_labels = evaluate(model, test_entries, device, args.batch_size, cache_connection)
         test_metrics = compute_metrics(test_probabilities, test_labels, best_threshold)
@@ -270,9 +264,7 @@ def main() -> None:
             "seed": args.seed,
             "numWorkers": max(0, args.num_workers),
             "prefetchFactor": max(1, args.prefetch_factor) if args.num_workers > 0 else None,
-            "pinMemory": device.type == "cuda",
-            "amp": amp_enabled,
-            "compile": compile_enabled,
+            "pinMemory": False,
             "headWarmupEpochs": head_warmup_epochs,
             "scheduler": args.scheduler,
             "headLearningRate": head_learning_rate,
@@ -346,8 +338,6 @@ def init_wandb(
     val_entries: list,
     test_entries: list,
     run_dir: Path,
-    amp_enabled: bool,
-    compile_enabled: bool,
     head_warmup_epochs: int,
     head_learning_rate: float,
 ) -> wandb.sdk.wandb_run.Run | None:
@@ -366,9 +356,7 @@ def init_wandb(
         "seed": args.seed,
         "num_workers": args.num_workers,
         "prefetch_factor": args.prefetch_factor if args.num_workers > 0 else None,
-        "pin_memory": device.type == "cuda",
-        "amp": amp_enabled,
-        "compile": compile_enabled,
+        "pin_memory": False,
         "head_warmup_epochs": head_warmup_epochs,
         "scheduler": args.scheduler,
         "head_learning_rate": head_learning_rate,
@@ -418,8 +406,6 @@ def init_wandb(
 def choose_device(force_cpu: bool) -> torch.device:
     if force_cpu:
         return torch.device("cpu")
-    if torch.cuda.is_available():
-        return torch.device("cuda")
     if torch.backends.mps.is_available():
         return torch.device("mps")
     return torch.device("cpu")
@@ -434,11 +420,6 @@ def seed_everything(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-    if hasattr(torch.backends, "cudnn"):
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
     torch.use_deterministic_algorithms(True, warn_only=True)
 
 
@@ -459,7 +440,7 @@ def dataloader_kwargs(args: argparse.Namespace, device: torch.device) -> dict[st
     num_workers = max(0, args.num_workers)
     kwargs: dict[str, object] = {
         "num_workers": num_workers,
-        "pin_memory": device.type == "cuda",
+        "pin_memory": False,
     }
     if num_workers > 0:
         kwargs["persistent_workers"] = True
@@ -468,40 +449,10 @@ def dataloader_kwargs(args: argparse.Namespace, device: torch.device) -> dict[st
     return kwargs
 
 
-def resolve_amp_enabled(mode: str, device: torch.device) -> bool:
-    if mode == "off":
-        return False
-    if mode == "auto":
-        return device.type == "cuda"
-    if device.type != "cuda":
-        raise SystemExit("--amp=on is only supported on CUDA in this trainer.")
-    return True
-
-
-def resolve_compile_enabled(mode: str, device: torch.device) -> bool:
-    if mode == "off":
-        return False
-    if not hasattr(torch, "compile"):
-        if mode == "on":
-            raise SystemExit("torch.compile is not available in this PyTorch build.")
-        return False
-    if mode == "auto":
-        return device.type == "cuda"
-    if device.type != "cuda":
-        raise SystemExit("--compile=on is only enabled for CUDA in this trainer.")
-    return True
-
-
-def autocast_context(device: torch.device, amp_enabled: bool):
-    if amp_enabled and device.type == "cuda":
-        return torch.autocast(device_type="cuda", dtype=torch.float16)
-    return nullcontext()
-
-
 def build_loss(train_entries: list, label_smoothing: float) -> nn.Module:
-    positives = sum(1 for entry in train_entries if entry.label == "milady")
-    negatives = max(1, len(train_entries) - positives)
-    positive_weight = negatives / max(1, positives)
+    positive_weight_total = sum(entry.sample_weight for entry in train_entries if entry.label == "milady")
+    negative_weight_total = sum(entry.sample_weight for entry in train_entries if entry.label != "milady")
+    positive_weight = negative_weight_total / max(1e-8, positive_weight_total)
     return nn.CrossEntropyLoss(
         weight=torch.tensor([1.0, positive_weight], dtype=torch.float32),
         reduction="none",
@@ -546,6 +497,14 @@ def current_learning_rate(optimizer: torch.optim.Optimizer) -> float:
     return float(optimizer.param_groups[0]["lr"])
 
 
+def set_backbone_batchnorm_mode(model: nn.Module, *, frozen: bool) -> None:
+    for name, module in model.named_modules():
+        if name.startswith("classifier"):
+            continue
+        if isinstance(module, nn.modules.batchnorm._BatchNorm):
+            module.eval() if frozen else module.train()
+
+
 def run_epoch(
     model: nn.Module,
     loader: DataLoader,
@@ -557,12 +516,11 @@ def run_epoch(
     log_every: int,
     wandb_run: wandb.sdk.wandb_run.Run | None,
     global_step_base: int,
-    amp_enabled: bool,
-    grad_scaler: torch.amp.GradScaler,
     scheduler,
     phase: str,
 ) -> tuple[float, int]:
     model.train()
+    set_backbone_batchnorm_mode(model, frozen=phase == "warmup")
     total_loss = 0.0
     total_items = 0
     total_batches = max(1, len(loader))
@@ -572,17 +530,11 @@ def run_epoch(
         labels = labels.to(device)
         sample_weights = sample_weights.to(device=device, dtype=torch.float32)
         optimizer.zero_grad(set_to_none=True)
-        with autocast_context(device, amp_enabled):
-            logits = model(inputs)
-            loss_values = criterion(logits, labels)
-            loss = (loss_values * sample_weights).sum() / sample_weights.sum().clamp_min(1e-8)
-        if grad_scaler.is_enabled():
-            grad_scaler.scale(loss).backward()
-            grad_scaler.step(optimizer)
-            grad_scaler.update()
-        else:
-            loss.backward()
-            optimizer.step()
+        logits = model(inputs)
+        loss_values = criterion(logits, labels)
+        loss = (loss_values * sample_weights).sum() / sample_weights.sum().clamp_min(1e-8)
+        loss.backward()
+        optimizer.step()
         if scheduler is not None:
             scheduler.step()
         total_loss += float(loss.item()) * inputs.size(0)
@@ -640,8 +592,6 @@ def print_run_header(
     val_entries: list,
     test_entries: list,
     run_dir: Path,
-    amp_enabled: bool,
-    compile_enabled: bool,
     head_warmup_epochs: int,
     head_learning_rate: float,
     finetune_epochs: int,
@@ -652,7 +602,7 @@ def print_run_header(
         f"[setup] run_id={args.run_id} device={device.type} "
         f"epochs={args.epochs} batch_size={args.batch_size} lr={args.learning_rate:g} "
         f"weight_decay={args.weight_decay:g} patience={args.patience} precision_floor={args.precision_floor:.4f} "
-        f"seed={args.seed} amp={amp_enabled} compile={compile_enabled} "
+        f"seed={args.seed} "
         f"warmup_epochs={head_warmup_epochs} head_lr={head_learning_rate:g} "
         f"scheduler={args.scheduler} label_smoothing={args.label_smoothing:g} augment={args.augment}",
         flush=True,
@@ -661,7 +611,7 @@ def print_run_header(
         f"[setup] splits train={len(train_entries)} val={len(val_entries)} test={len(test_entries)} "
         f"train_milady={positives} train_not_milady={negatives} "
         f"num_workers={max(0, args.num_workers)} prefetch_factor={(max(1, args.prefetch_factor) if args.num_workers > 0 else 'n/a')} "
-        f"pin_memory={'cuda-only' if device.type == 'cuda' else 'off'} finetune_epochs={finetune_epochs}",
+        f"pin_memory=off finetune_epochs={finetune_epochs}",
         flush=True,
     )
     print(f"[setup] artifacts={run_dir}", flush=True)
