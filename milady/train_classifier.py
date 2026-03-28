@@ -121,7 +121,7 @@ def main() -> None:
 
         best_state: dict[str, torch.Tensor] | None = None
         best_threshold = 0.995
-        best_selection_key = (-1.0, -1.0, -1.0, -1.0)
+        best_selection_key = (-1.0, -1.0)
         best_epoch = -1
         best_val_metrics: dict[str, float] | None = None
         history: list[dict[str, float | int]] = []
@@ -192,9 +192,7 @@ def main() -> None:
                 )
             selection_key = (
                 threshold_metrics["recall"],
-                threshold_metrics["precision"],
                 threshold_metrics["f1"],
-                threshold,
             )
             improved = selection_key > best_selection_key
             stale_after_epoch = 0 if improved else (stale_epochs + 1 if phase == "finetune" else stale_epochs)

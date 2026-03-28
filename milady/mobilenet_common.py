@@ -196,7 +196,6 @@ def choose_threshold(probabilities: list[float], labels: list[int], precision_fl
             passing_candidates,
             key=lambda item: (
                 item[1]["recall"],
-                item[1]["precision"],
                 item[1]["f1"],
                 item[0],
             ),
@@ -237,14 +236,6 @@ def dataset_entries_to_jsonl(entries: list[DatasetEntry], path: Path) -> None:
     ]
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + ("\n" if lines else ""))
-
-
-def load_image_for_inference(path: Path) -> torch.Tensor:
-    connection = connect_offline_cache_db()
-    try:
-        return load_image_for_inference_with_cache(path, connection)
-    finally:
-        connection.close()
 
 
 def load_image_for_inference_with_cache(path: Path, connection: sqlite3.Connection) -> torch.Tensor:
@@ -302,26 +293,20 @@ def probabilities_from_model(
     model: nn.Module,
     paths: list[Path],
     device: torch.device,
+    connection: sqlite3.Connection,
     batch_size: int = 64,
-    connection: sqlite3.Connection | None = None,
 ) -> np.ndarray:
     model.eval()
     batches: list[np.ndarray] = []
-    owned_connection = connection is None
-    cache_connection = connection or connect_offline_cache_db()
     with torch.no_grad():
-        try:
-            for start in range(0, len(paths), batch_size):
-                batch_paths = paths[start : start + batch_size]
-                tensors = torch.cat(
-                    [load_image_for_inference_with_cache(path, cache_connection) for path in batch_paths],
-                    dim=0,
-                ).to(device)
-                logits = model(tensors)
-                probabilities = score_logits_to_probabilities(logits).view(len(batch_paths), len(INFERENCE_CROP_VARIANTS))
-                max_probabilities = torch.max(probabilities, dim=1).values
-                batches.append(max_probabilities.detach().cpu().numpy())
-        finally:
-            if owned_connection:
-                cache_connection.close()
+        for start in range(0, len(paths), batch_size):
+            batch_paths = paths[start : start + batch_size]
+            tensors = torch.cat(
+                [load_image_for_inference_with_cache(path, connection) for path in batch_paths],
+                dim=0,
+            ).to(device)
+            logits = model(tensors)
+            probabilities = score_logits_to_probabilities(logits).view(len(batch_paths), len(INFERENCE_CROP_VARIANTS))
+            max_probabilities = torch.max(probabilities, dim=1).values
+            batches.append(max_probabilities.detach().cpu().numpy())
     return np.concatenate(batches) if batches else np.array([], dtype=np.float32)
