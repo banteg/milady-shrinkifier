@@ -236,13 +236,13 @@ The training set uses two trust tiers for exported labels:
 Current weights are:
 
 - `manual`: `1.0`
-- `model`: `0.5`
+- `model`: `1.0`
 - collection corpus positives: `0.5`
 
 The intended effect is:
 
-- gold labels dominate
-- trusted labels matter, but less
+- human-reviewed and model-refreshed exported labels train at full strength
+- collection positives still help, but they do not dominate the exported corpus
 
 ## Step 8: Train A Candidate
 

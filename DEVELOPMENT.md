@@ -44,7 +44,7 @@ For a fuller narrative walkthrough of the pipeline and label sources used during
 Split policy:
 - blind `val` / `test` prioritize manual export labels and held-out collection positives
 - routine training uses real exported avatars, conservative model labels, and a reduced-weight collection corpus
-- `manual` labels are gold and `model` labels are trusted at lower weight
+- `manual` labels are gold, `model` labels are trusted, and only the collection corpus is downweighted
 
 Typical loop:
 
