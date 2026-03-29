@@ -76,4 +76,6 @@ Recommended review order after scoring:
 - `Unreviewed`
 - `Residual unlabeled`
 
-In the review UI, pick a scored `run_id` first. Queue ranking, disagreement flags, and 9-up batch defaults are all tied to that selected run. Both individual and batch review write `manual` labels. `uv run milady score` refreshes lower-confidence automatic `model` labels from the same scored run unless you pass `--score-only`.
+In the review UI, pick a scored `run_id` first. Queue ranking, disagreement flags, and 9-up batch defaults are all tied to that selected run. Both individual and batch review write `manual` labels. `uv run milady score` refreshes automatic `model` labels from the same scored run unless you pass `--score-only`.
+
+One subtlety: the review app only lists runs that have catalog scores in `model_scores`. Promoting a run into the extension does not make it appear in review by itself; run `uv run milady score --run-id <promoted-run-id>` first if you want to inspect that model in the review UI.

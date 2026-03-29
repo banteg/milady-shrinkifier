@@ -103,7 +103,7 @@ Scoring writes per-image model outputs into the catalog:
 - threshold for that run
 - distance from the threshold
 
-This step does not create labels by itself. It ranks the catalog so review effort can focus on the most useful cases.
+This step writes both score records and automatic `model` labels for non-manual exported avatars, unless you pass `--score-only`. It also ranks the catalog so review effort can focus on the most useful cases.
 
 ## Step 5: Review High-Value Cases
 
@@ -119,6 +119,8 @@ The review app is the labeling and audit layer. It is meant to direct human atte
 ### Run-Pinned Review
 
 The UI starts with a `Run` selector. Pick the scored run you want to improve. Queue ranking, disagreement flags, and batch defaults are all tied to that selected run.
+
+The `Run` selector is populated from scored runs in the local catalog. A run that has been promoted into the extension still will not appear there until you score the catalog with it at least once.
 
 ### Main Queues
 
@@ -171,7 +173,7 @@ Those labels are also written as `manual`.
 
 ### Model Labels
 
-After scoring, the pipeline refreshes conservative automatic labels from the same run. `uv run milady score` clears previous `model` labels and rewrites only the current run’s extreme-confidence automatic labels. This keeps the low-confidence auto-label lane tied to the latest model instead of accumulating stale pseudo-labels over time.
+After scoring, the pipeline refreshes automatic labels from the same run. `uv run milady score` clears previous `model` labels and rewrites the current run’s non-manual exported backlog. This keeps the auto-label lane tied to the latest model instead of accumulating stale pseudo-labels over time.
 
 If you want to write only `model_scores` without touching automatic labels, use:
 
