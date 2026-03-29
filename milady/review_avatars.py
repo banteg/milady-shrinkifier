@@ -317,7 +317,11 @@ def label_avatar(payload: LabelPayload) -> JSONResponse:
         if not existing:
             raise HTTPException(status_code=404, detail=f"Unknown avatar sha256: {payload.sha256}")
 
-        if existing["label"] == payload.label and existing["review_notes"] == payload.note:
+        if (
+            existing["label"] == payload.label
+            and existing["review_notes"] == payload.note
+            and existing["label_source"] == MANUAL_LABEL_SOURCE
+        ):
             return JSONResponse({"ok": True, "changed": False})
 
         connection.execute(
@@ -385,7 +389,7 @@ def batch_label(payload: BatchLabelPayload) -> JSONResponse:
             if not existing:
                 raise HTTPException(status_code=404, detail=f"Unknown avatar sha256: {item.sha256}")
 
-            if existing["label"] == item.label:
+            if existing["label"] == item.label and existing["label_source"] == MANUAL_LABEL_SOURCE:
                 continue
 
             connection.execute(
@@ -419,6 +423,7 @@ def batch_label(payload: BatchLabelPayload) -> JSONResponse:
             SET label = ?,
                 label_source = ?,
                 labeled_at = CURRENT_TIMESTAMP,
+                review_notes = NULL,
                 updated_at = CURRENT_TIMESTAMP
             WHERE sha256 = ?
             """,
