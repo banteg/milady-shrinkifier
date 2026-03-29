@@ -4,6 +4,7 @@ import {
   DEFAULT_SETTINGS,
   DEFAULT_STATS,
 } from "./constants";
+import { normalizeHandle } from "./account-core";
 import type {
   CollectedAvatarMap,
   DetectionStats,
@@ -217,8 +218,4 @@ function uniqueStrings(
         .filter((entry) => entry.length > 0),
     ),
   ).sort((left, right) => left.localeCompare(right));
-}
-
-function normalizeHandle(value: string): string {
-  return value.trim().replace(/^@+/, "").toLowerCase();
 }

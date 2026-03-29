@@ -11,6 +11,7 @@ import { resolveRuntimeModelConfig, type RuntimeModelConfig } from "./shared/mod
 import {
   normalizeProfileImageUrl,
 } from "./shared/image-core";
+import { normalizeHandle } from "./shared/account-core";
 import {
   loadCollectedAvatars,
   loadMatchedAccounts,
@@ -832,10 +833,6 @@ function mergeUniqueStrings(
     values.add(normalized);
   }
   return Array.from(values).sort((left, right) => left.localeCompare(right));
-}
-
-function normalizeHandle(value: string | null | undefined): string {
-  return (value ?? "").trim().replace(/^\/+/, "").replace(/^@+/, "").toLowerCase();
 }
 
 function formatProbabilityDebugLabel(score: number, threshold: number): string {
