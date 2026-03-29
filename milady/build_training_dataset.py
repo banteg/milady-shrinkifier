@@ -36,6 +36,7 @@ LABEL_TIER_PRIORITY = {
 WEAK_LABEL_WEIGHT = 0.35
 TRUSTED_COLLECTION_WEIGHT = 0.5
 GOLD_LABEL_SOURCE = "manual"
+WEAK_LABEL_SOURCES = {"silver"}
 PERCEPTUAL_HASH_HAMMING_THRESHOLD = 4
 COLLECTION_HOLDOUT_VAL_COUNT = 64
 COLLECTION_HOLDOUT_TEST_COUNT = 64
@@ -322,6 +323,7 @@ def build_sample_records(connection, cache_connection) -> list[SampleRecord]:
         FROM images
         WHERE label IN ('milady', 'not_milady')
           AND local_path IS NOT NULL
+          AND label_source IN ('manual', 'silver')
         ORDER BY sha256 ASC
         """
     ).fetchall()
@@ -583,7 +585,11 @@ def hamming_distance(left: int, right: int) -> int:
 
 
 def label_tier_for_export_label_source(label_source: str) -> str:
-    return "gold" if label_source == GOLD_LABEL_SOURCE else "weak"
+    if label_source == GOLD_LABEL_SOURCE:
+        return "gold"
+    if label_source in WEAK_LABEL_SOURCES:
+        return "weak"
+    raise SystemExit(f"Unsupported exported label source for dataset build: {label_source}")
 
 
 def sample_weight_for_label_tier(label_tier: str) -> float:

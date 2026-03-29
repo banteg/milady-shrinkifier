@@ -98,15 +98,6 @@ def main() -> None:
                 merged_handles = merge_string_lists(parse_json_list(existing["handles_json"]), incoming_handles)
                 merged_display_names = merge_string_lists(parse_json_list(existing["display_names_json"]), incoming_display_names)
                 merged_sources = merge_string_lists(parse_json_list(existing["source_surfaces_json"]), incoming_source_surfaces)
-                heuristic_match = existing["heuristic_match"]
-                if avatar.get("heuristicMatch") is True:
-                    heuristic_match = 1
-                elif heuristic_match is None and avatar.get("heuristicMatch") is False:
-                    heuristic_match = 0
-                heuristic_score = existing["heuristic_score"]
-                if isinstance(avatar.get("heuristicScore"), (int, float)):
-                    candidate_score = float(avatar["heuristicScore"])
-                    heuristic_score = candidate_score if heuristic_score is None else max(float(heuristic_score), candidate_score)
 
                 connection.execute(
                     """
@@ -121,10 +112,6 @@ def main() -> None:
                         example_profile_url = ?,
                         example_notification_url = ?,
                         example_tweet_url = ?,
-                        heuristic_match = ?,
-                        heuristic_source = ?,
-                        heuristic_score = ?,
-                        heuristic_token_id = ?,
                         whitelisted = ?,
                         updated_at = ?
                     WHERE normalized_url = ?
@@ -140,10 +127,6 @@ def main() -> None:
                         coalesce_latest(existing["example_profile_url"], avatar.get("exampleProfileUrl")),
                         coalesce_latest(existing["example_notification_url"], avatar.get("exampleNotificationUrl")),
                         coalesce_latest(existing["example_tweet_url"], avatar.get("exampleTweetUrl")),
-                        heuristic_match,
-                        avatar.get("heuristicSource") or existing["heuristic_source"],
-                        heuristic_score,
-                        avatar.get("heuristicTokenId") or existing["heuristic_token_id"],
                         1 if (bool(existing["whitelisted"]) or avatar.get("whitelisted") is True) else 0,
                         now,
                         normalized_url,
@@ -164,14 +147,10 @@ def main() -> None:
                       example_profile_url,
                       example_notification_url,
                       example_tweet_url,
-                      heuristic_match,
-                      heuristic_source,
-                      heuristic_score,
-                      heuristic_token_id,
                       whitelisted,
                       created_at,
                       updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         normalized_url,
@@ -185,10 +164,6 @@ def main() -> None:
                         avatar.get("exampleProfileUrl"),
                         avatar.get("exampleNotificationUrl"),
                         avatar.get("exampleTweetUrl"),
-                        1 if avatar.get("heuristicMatch") is True else 0 if avatar.get("heuristicMatch") is False else None,
-                        avatar.get("heuristicSource"),
-                        float(avatar["heuristicScore"]) if isinstance(avatar.get("heuristicScore"), (int, float)) else None,
-                        int(avatar["heuristicTokenId"]) if isinstance(avatar.get("heuristicTokenId"), int) else None,
                         1 if avatar.get("whitelisted") is True else 0,
                         now,
                         now,

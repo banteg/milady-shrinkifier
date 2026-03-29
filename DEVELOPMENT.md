@@ -42,7 +42,7 @@ The extension exports collected avatars as JSON manifests. The offline pipeline 
 Split policy:
 - blind `val` / `test` prioritize manual export labels and held-out collection positives
 - routine training uses real exported avatars, scored hard cases, and a reduced-weight collection corpus
-- heuristic-assisted and silver labels stay in the training pool with a reduced sample weight
+- silver labels stay in the training pool with a reduced sample weight
 
 Typical loop:
 
@@ -69,7 +69,5 @@ Recommended review order after scoring:
 - `High-score false positives`
 - `High-score unlabeled`
 - `Unlabeled`
-
-`uv run milady label-heuristic` is now best treated as an optional bootstrap step for a fresh catalog, not part of the routine retraining loop.
 
 `uv run milady label-silver` is conservative by default: it only auto-labels unlabeled images with extremely low model scores as weak `not_milady` examples. Those silver labels are train-only and are never used for blind validation or test.

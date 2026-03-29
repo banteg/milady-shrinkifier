@@ -785,13 +785,6 @@ function recordCollectedAvatar(input: {
       existing?.exampleProfileUrl ?? (input.author ? toAbsoluteUrl(`/${input.author.handle}`) : null),
     exampleNotificationUrl: existing?.exampleNotificationUrl ?? input.exampleNotificationUrl,
     exampleTweetUrl: existing?.exampleTweetUrl ?? input.exampleTweetUrl,
-    heuristicMatch:
-      typeof input.result?.matched === "boolean" ? input.result.matched : existing?.heuristicMatch ?? null,
-    heuristicSource: input.result?.source ?? existing?.heuristicSource ?? null,
-    heuristicScore:
-      typeof input.result?.score === "number" ? input.result.score : existing?.heuristicScore ?? null,
-    heuristicTokenId:
-      typeof input.result?.tokenId === "number" ? input.result.tokenId : existing?.heuristicTokenId ?? null,
     whitelisted: input.whitelisted || existing?.whitelisted === true,
   };
   scheduleLocalStateWrite();

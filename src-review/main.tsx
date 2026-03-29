@@ -8,8 +8,6 @@ import { render } from "solid-js/web";
 type ReviewLabel = "milady" | "not_milady" | "unclear";
 type QueueName =
   | "unlabeled"
-  | "heuristic_matches"
-  | "heuristic_reviewed"
   | "whitelisted"
   | "high_seen_count"
   | "notification_group"
@@ -30,10 +28,6 @@ interface ReviewItem {
   displayNames: string[];
   sourceSurfaces: string[];
   seenCount: number;
-  heuristicMatch: boolean;
-  heuristicSource: string | null;
-  heuristicScore: number | null;
-  heuristicTokenId: number | null;
   whitelisted: boolean;
   maxModelScore: number | null;
   latestModelPredictedLabel: ReviewLabel | null;
@@ -112,8 +106,6 @@ type VirtualGridRow =
 
 const queueLabels: Record<QueueName, string> = {
   unlabeled: "Unlabeled",
-  heuristic_matches: "Heuristic review",
-  heuristic_reviewed: "Heuristic labeled",
   whitelisted: "Whitelisted",
   high_seen_count: "High seen count",
   notification_group: "Notification group",
@@ -211,23 +203,15 @@ function shortLabel(label: ReviewLabel): string {
   return "N";
 }
 
-function initialBatchLabel(item: ReviewItem, queue: QueueName): ReviewLabel {
+function initialBatchLabel(item: ReviewItem): ReviewLabel {
   if (item.label) {
     return item.label;
-  }
-  if (queue === "heuristic_matches" && item.heuristicMatch) {
-    return "milady";
   }
   return "not_milady";
 }
 
 function renderStatusPills(item: ReviewItem) {
-  const pills = [
-    {
-      text: `heuristic ${item.heuristicMatch ? "milady" : "not_milady"}`,
-      tone: item.heuristicMatch ? "warn" : "good",
-    },
-  ];
+  const pills = [];
   if (item.latestModelPredictedLabel) {
     pills.push({
       text: `model ${item.latestModelPredictedLabel} ${formatScore(item.maxModelScore)}`,
@@ -257,12 +241,6 @@ function metadataRows(item: ReviewItem): Array<{ label: string; value: string | 
     { label: "display names", value: item.displayNames.join(", ") || "none" },
     { label: "seen count", value: String(item.seenCount) },
     { label: "source surfaces", value: item.sourceSurfaces.join(", ") || "none" },
-    {
-      label: "heuristic",
-      value: item.heuristicMatch
-        ? `${item.heuristicSource ?? "match"} (${item.heuristicScore ?? "n/a"})`
-        : "no",
-    },
     {
       label: "model",
       value: item.latestModelPredictedLabel
@@ -399,7 +377,7 @@ function App() {
     setBatchAssignments(
       payload.items.map((item) => ({
         item,
-        assignedLabel: initialBatchLabel(item, payload.queue),
+        assignedLabel: initialBatchLabel(item),
       })),
     );
   });

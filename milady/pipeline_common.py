@@ -35,8 +35,6 @@ PUBLIC_MODEL_PATH = PROJECT_ROOT / "public" / "models" / "milady-mobilenetv3-sma
 PUBLIC_METADATA_PATH = PROJECT_ROOT / "public" / "generated" / "milady-mobilenetv3-small.meta.json"
 REVIEW_QUEUES = (
     "unlabeled",
-    "heuristic_matches",
-    "heuristic_reviewed",
     "whitelisted",
     "high_seen_count",
     "notification_group",
@@ -60,10 +58,6 @@ class ReviewItem:
     display_names: list[str]
     source_surfaces: list[str]
     seen_count: int
-    heuristic_match: bool
-    heuristic_source: str | None
-    heuristic_score: float | None
-    heuristic_token_id: int | None
     whitelisted: bool
     max_model_score: float | None
     latest_model_predicted_label: str | None
@@ -90,10 +84,6 @@ class ReviewItem:
             "displayNames": self.display_names,
             "sourceSurfaces": self.source_surfaces,
             "seenCount": self.seen_count,
-            "heuristicMatch": self.heuristic_match,
-            "heuristicSource": self.heuristic_source,
-            "heuristicScore": self.heuristic_score,
-            "heuristicTokenId": self.heuristic_token_id,
             "whitelisted": self.whitelisted,
             "maxModelScore": self.max_model_score,
             "latestModelPredictedLabel": self.latest_model_predicted_label,
@@ -189,10 +179,6 @@ def init_db(connection: sqlite3.Connection) -> None:
           example_profile_url TEXT,
           example_notification_url TEXT,
           example_tweet_url TEXT,
-          heuristic_match INTEGER,
-          heuristic_source TEXT,
-          heuristic_score REAL,
-          heuristic_token_id INTEGER,
           whitelisted INTEGER NOT NULL DEFAULT 0,
           image_sha256 TEXT,
           download_status TEXT NOT NULL DEFAULT 'pending',
@@ -558,10 +544,6 @@ def load_review_items(connection: sqlite3.Connection) -> list[ReviewItem]:
         display_names: list[str] = []
         source_surfaces: list[str] = []
         seen_count = 0
-        heuristic_match = False
-        heuristic_source: str | None = None
-        heuristic_score: float | None = None
-        heuristic_token_id: int | None = None
         whitelisted = False
         example_profile_url: str | None = None
         example_notification_url: str | None = None
@@ -573,13 +555,6 @@ def load_review_items(connection: sqlite3.Connection) -> list[ReviewItem]:
             display_names = merge_string_lists(display_names, parse_json_list(row["display_names_json"]))
             source_surfaces = merge_string_lists(source_surfaces, parse_json_list(row["source_surfaces_json"]))
             seen_count += int(row["seen_count"])
-            heuristic_match = heuristic_match or bool_from_db(row["heuristic_match"])
-            heuristic_source = heuristic_source or row["heuristic_source"]
-            if row["heuristic_score"] is not None:
-                score_value = float(row["heuristic_score"])
-                heuristic_score = score_value if heuristic_score is None else max(heuristic_score, score_value)
-            if row["heuristic_token_id"] is not None:
-                heuristic_token_id = int(row["heuristic_token_id"])
             whitelisted = whitelisted or bool_from_db(row["whitelisted"])
             example_profile_url = example_profile_url or row["example_profile_url"]
             example_notification_url = example_notification_url or row["example_notification_url"]
@@ -605,13 +580,8 @@ def load_review_items(connection: sqlite3.Connection) -> list[ReviewItem]:
             if latest_model_score is not None and latest_model_threshold is not None
             else None
         )
-        heuristic_predicted_label = "milady" if heuristic_match else "not_milady"
         disagreement_flags: list[str] = []
-        if latest_model_predicted_label and latest_model_predicted_label != heuristic_predicted_label:
-            disagreement_flags.append("model_vs_heuristic")
         if human_label and human_label != "unclear":
-            if human_label != heuristic_predicted_label:
-                disagreement_flags.append("human_vs_heuristic")
             if latest_model_predicted_label and human_label != latest_model_predicted_label:
                 disagreement_flags.append("human_vs_model")
 
@@ -627,10 +597,6 @@ def load_review_items(connection: sqlite3.Connection) -> list[ReviewItem]:
                 display_names=display_names,
                 source_surfaces=source_surfaces,
                 seen_count=seen_count,
-                heuristic_match=heuristic_match,
-                heuristic_source=heuristic_source,
-                heuristic_score=heuristic_score,
-                heuristic_token_id=heuristic_token_id,
                 whitelisted=whitelisted,
                 max_model_score=latest_model_score,
                 latest_model_predicted_label=latest_model_predicted_label,
@@ -659,27 +625,9 @@ def queue_items(items: list[ReviewItem], queue_name: str) -> list[ReviewItem]:
         return sorted(
             filtered,
             key=lambda item: (
-                item.heuristic_match,
                 item.max_model_score if item.max_model_score is not None else -1.0,
                 item.seen_count,
                 item.last_seen_at or "",
-            ),
-            reverse=True,
-        )
-
-    if queue_name == "heuristic_matches":
-        return sorted(
-            (item for item in items if item.heuristic_match and item.label is None),
-            key=lambda item: item.seen_count,
-            reverse=True,
-        )
-
-    if queue_name == "heuristic_reviewed":
-        return sorted(
-            (item for item in items if item.heuristic_match and item.label is not None),
-            key=lambda item: (
-                item.seen_count,
-                item.labeled_at or "",
             ),
             reverse=True,
         )

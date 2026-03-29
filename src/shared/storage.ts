@@ -195,18 +195,6 @@ export function normalizeCollectedAvatars(value: unknown): CollectedAvatarMap {
       exampleNotificationUrl:
         typeof candidate.exampleNotificationUrl === "string" ? candidate.exampleNotificationUrl : null,
       exampleTweetUrl: typeof candidate.exampleTweetUrl === "string" ? candidate.exampleTweetUrl : null,
-      heuristicMatch:
-        typeof candidate.heuristicMatch === "boolean" ? candidate.heuristicMatch : null,
-      heuristicSource:
-        candidate.heuristicSource === "onnx" ? candidate.heuristicSource : null,
-      heuristicScore:
-        typeof candidate.heuristicScore === "number" && Number.isFinite(candidate.heuristicScore)
-          ? candidate.heuristicScore
-          : null,
-      heuristicTokenId:
-        typeof candidate.heuristicTokenId === "number" && Number.isFinite(candidate.heuristicTokenId)
-          ? candidate.heuristicTokenId
-          : null,
       whitelisted: candidate.whitelisted === true,
     };
   }

@@ -36,10 +36,6 @@ export interface CollectedAvatar {
   exampleProfileUrl: string | null;
   exampleNotificationUrl: string | null;
   exampleTweetUrl: string | null;
-  heuristicMatch: boolean | null;
-  heuristicSource: "onnx" | null;
-  heuristicScore: number | null;
-  heuristicTokenId: number | null;
   whitelisted: boolean;
 }
 
