@@ -47,7 +47,7 @@ All scores come from the current blind set: manually labeled exported avatars pl
 | `v0.3.0` | `20260327T212453Z` | + Remilio, Pixelady + `2,967` manually tagged avatars | `1.0000` | `0.9359` |
 | `v0.4.0` | `20260328T144735Z` | + `5,715` manually tagged avatars | `1.0000` | `0.9744` |
 | `v0.5.0` | `20260328T223931Z` | + `6,773` manually tagged avatars | `1.0000` | `0.9744` |
-| `v0.6.0` | `20260329T124912Z` | + `6,729` manually tagged avatars | `1.0000` | `0.9231` |
+| `v0.6.0` | `20260329T124912Z` | + `7,370` human-reviewed avatars | `1.0000` | `0.9231` |
 
 All rows were re-evaluated on the same blind set on March 29, 2026, so they are directly comparable.
 
