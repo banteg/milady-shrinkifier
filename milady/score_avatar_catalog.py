@@ -7,12 +7,22 @@ from pathlib import Path
 import torch
 
 from .mobilenet_common import probabilities_from_model, create_model
-from .pipeline_common import MODEL_RUN_ROOT, connect_db, connect_offline_cache_db, now_iso, resolve_repo_path
+from .pipeline_common import (
+    MODEL_RUN_ROOT,
+    PUBLIC_METADATA_PATH,
+    connect_db,
+    connect_offline_cache_db,
+    now_iso,
+    resolve_repo_path,
+)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Score downloaded catalog avatars with a trained MobileNetV3-Small checkpoint.")
-    parser.add_argument("--run-id", required=True, help="Training run id under cache/models/mobilenet_v3_small/")
+    parser.add_argument(
+        "--run-id",
+        help="Training run id under cache/models/mobilenet_v3_small/. Defaults to the currently promoted run.",
+    )
     parser.add_argument("--checkpoint", help="Explicit checkpoint path. Defaults to cache/models/mobilenet_v3_small/<run-id>/best.pt")
     parser.add_argument("--threshold", type=float, default=None, help="Override decision threshold when writing predicted labels.")
     parser.add_argument("--cpu", action="store_true", help="Force CPU inference.")
@@ -23,7 +33,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    run_dir = MODEL_RUN_ROOT / args.run_id
+    run_id = args.run_id or load_default_run_id()
+    run_dir = MODEL_RUN_ROOT / run_id
     checkpoint_path = Path(args.checkpoint) if args.checkpoint else run_dir / "best.pt"
     summary_path = run_dir / "summary.json"
     if not checkpoint_path.exists():
@@ -79,7 +90,7 @@ def main() -> None:
             )
             payload = [
                 (
-                    args.run_id,
+                    run_id,
                     str(row["sha256"]),
                     probability,
                     "milady" if probability >= threshold else "not_milady",
@@ -114,10 +125,24 @@ def main() -> None:
                 flush=True,
             )
 
-        print(f"Scored {scored} image(s) for run {args.run_id}.")
+        print(f"Scored {scored} image(s) for run {run_id}.")
     finally:
         cache_connection.close()
         connection.close()
+
+
+def load_default_run_id() -> str:
+    if not PUBLIC_METADATA_PATH.exists():
+        raise SystemExit(
+            "No default promoted model metadata found. Pass --run-id explicitly or export a promoted model first."
+        )
+    payload = json.loads(PUBLIC_METADATA_PATH.read_text())
+    run_id = payload.get("runId")
+    if not isinstance(run_id, str) or not run_id:
+        raise SystemExit(
+            f"Promoted model metadata at {PUBLIC_METADATA_PATH} does not contain a valid runId."
+        )
+    return run_id
 
 
 def choose_device(force_cpu: bool) -> torch.device:
