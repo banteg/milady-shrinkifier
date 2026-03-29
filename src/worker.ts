@@ -15,6 +15,7 @@ let positiveIndex = 1;
 let runQueue: Promise<void> = Promise.resolve();
 let pendingRequests: WorkerRequest[] = [];
 let flushTimer: number | null = null;
+let supportsDynamicBatch = false;
 
 self.addEventListener("message", (event: MessageEvent<InitMessage | WorkerRequest>) => {
   const data = event.data;
@@ -26,6 +27,7 @@ self.addEventListener("message", (event: MessageEvent<InitMessage | WorkerReques
       executionProviders: ["wasm"],
       graphOptimizationLevel: "all",
     });
+    supportsDynamicBatch = false;
     pendingRequests = [];
     if (flushTimer !== null) {
       self.clearTimeout(flushTimer);
@@ -71,6 +73,7 @@ async function handleInferenceBatch(batch: WorkerRequest[]): Promise<void> {
   }
 
   const session = await sessionPromise;
+  supportsDynamicBatch = modelSupportsDynamicBatch(session);
   const [firstRequest] = batch;
   if (!firstRequest?.tensor || !firstRequest.shape) {
     throw new Error("Worker batch received no tensor payload");
@@ -82,8 +85,7 @@ async function handleInferenceBatch(batch: WorkerRequest[]): Promise<void> {
   }
 
   const sampleLength = firstRequest.tensor.length;
-  const batchedInput = new Float32Array(sampleLength * batch.length);
-  for (const [index, request] of batch.entries()) {
+  for (const request of batch) {
     if (!request.tensor || !request.shape) {
       throw new Error("Worker batch received an incomplete tensor payload");
     }
@@ -99,31 +101,39 @@ async function handleInferenceBatch(batch: WorkerRequest[]): Promise<void> {
     if (request.tensor.length !== sampleLength) {
       throw new Error("Worker batch received mixed tensor sizes");
     }
-    batchedInput.set(request.tensor, index * sampleLength);
   }
 
-  const tensor = new ort.Tensor("float32", batchedInput, [batch.length, channels, height, width]);
-  const outputName = session.outputNames[0];
-  const result = await session.run({
-    input: tensor,
-  });
-  const output = Array.from(result[outputName].data as Iterable<number>);
-  const classStride = output.length / batch.length;
-  if (!Number.isInteger(classStride) || classStride < 1) {
-    throw new Error("Worker received an unexpected ONNX output shape");
+  if (supportsDynamicBatch) {
+    const batchedInput = new Float32Array(sampleLength * batch.length);
+    for (const [index, request] of batch.entries()) {
+      batchedInput.set(request.tensor!, index * sampleLength);
+    }
+    const tensor = new ort.Tensor("float32", batchedInput, [batch.length, channels, height, width]);
+    const output = await runModel(session, tensor);
+    const classStride = output.length / batch.length;
+    if (!Number.isInteger(classStride) || classStride < 1) {
+      throw new Error("Worker received an unexpected ONNX output shape");
+    }
+
+    for (const [index, request] of batch.entries()) {
+      const offset = index * classStride;
+      const score = scoreFromOutput(output, offset, classStride);
+      self.postMessage({
+        id: request.id,
+        score,
+      } satisfies WorkerResponse);
+    }
+    return;
   }
 
-  for (const [index, request] of batch.entries()) {
-    const offset = index * classStride;
-    const score = classStride === 1
-      ? Number(output[offset] ?? 0)
-      : Number(output[offset + positiveIndex] ?? output[offset] ?? 0);
-
-    const response: WorkerResponse = {
+  for (const request of batch) {
+    const tensor = new ort.Tensor("float32", request.tensor!, request.shape);
+    const output = await runModel(session, tensor);
+    const score = scoreFromOutput(output, 0, output.length);
+    self.postMessage({
       id: request.id,
       score,
-    };
-    self.postMessage(response);
+    } satisfies WorkerResponse);
   }
 }
 
@@ -133,4 +143,24 @@ function postErrorResponse(id: string, error: unknown): void {
     error: error instanceof Error ? error.message : String(error),
   };
   self.postMessage(response);
+}
+
+async function runModel(session: ort.InferenceSession, tensor: ort.Tensor): Promise<number[]> {
+  const outputName = session.outputNames[0];
+  const result = await session.run({
+    input: tensor,
+  });
+  return Array.from(result[outputName].data as Iterable<number>);
+}
+
+function scoreFromOutput(output: number[], offset: number, classStride: number): number {
+  return classStride === 1
+    ? Number(output[offset] ?? 0)
+    : Number(output[offset + positiveIndex] ?? output[offset] ?? 0);
+}
+
+function modelSupportsDynamicBatch(session: ort.InferenceSession): boolean {
+  const metadata = session.inputMetadata[0] as { dimensions?: readonly (number | string | null | undefined)[] } | undefined;
+  const batchDimension = metadata?.dimensions?.[0];
+  return typeof batchDimension !== "number";
 }
