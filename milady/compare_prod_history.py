@@ -14,6 +14,7 @@ PROD_RELEASES: list[tuple[str, str]] = [
     ("v0.4.0", "20260328T144735Z"),
     ("v0.5.0", "20260328T223931Z"),
     ("v0.6.0", "20260329T124912Z"),
+    ("v0.7.0", "20260329T181946Z"),
 ]
 
 
@@ -24,8 +25,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--eval-set",
         choices=("blind", "all-manual", "all-exported"),
-        default="all-exported",
-        help="Evaluation population. Defaults to all deduped exported avatars with manual or model labels.",
+        default="all-manual",
+        help="Evaluation population. Defaults to the current manually reviewed exported corpus used in the README accuracy table.",
     )
     parser.add_argument("--prod-only", action="store_true", help="Skip the latest non-promoted work-in-progress run.")
     parser.add_argument("--output-dir", type=Path, help="Optional output directory. Defaults under cache/models/.../compare.")

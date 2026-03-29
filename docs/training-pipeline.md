@@ -149,7 +149,7 @@ The pipeline now uses three simple states for exported avatars:
   Any human-reviewed label. Individual and batch review both write `manual`, and these are treated as gold labels.
 
 - **`model`**
-  Automatic labels refreshed by `uv run milady score`. These are trainable, but they carry lower weight than human-reviewed labels.
+  Automatic labels refreshed by `uv run milady score`. These are trainable and currently use the same training weight as `manual` labels.
 
 - **`unclear`**
   A review outcome for ambiguous items. These stay in the catalog but are excluded from training and evaluation.
