@@ -38,7 +38,7 @@ All scores below come from the current manually reviewed exported corpus.
 
 - **Precision** — when the extension filters a post, how often it's right.
 - **Recall** — of the Milady-style avatars in the evaluation set, how many it catches.
-- **Evaluation corpus** — `7,695` exported avatars (`437` milady, `7,258` not_milady).
+- **Evaluation corpus** — `9,394` exported avatars (`486` milady, `8,908` not_milady).
 - This is broader than the blind split and still fully human-labeled, but it is not a blind benchmark.
 
 | Version | Run | Training mix | Precision | Recall |
@@ -49,6 +49,7 @@ All scores below come from the current manually reviewed exported corpus.
 | `v0.5.0` | `20260328T223931Z` | + `6,773` manually tagged avatars | `0.9952` | `0.9451` |
 | `v0.6.0` | `20260329T124912Z` | + `7,370` human-reviewed avatars | `0.9952` | `0.9474` |
 | `v0.7.0` | `20260329T181946Z` | + `7,695` human-reviewed avatars | `0.9951` | `0.9291` |
+| `v0.8.0` | `20260329T220050Z` | + `9,394` manually reviewed avatars | `0.9958` | `0.9691` |
 
 All rows were re-evaluated on the same manually reviewed exported corpus on March 29, 2026, so they are directly comparable.
 
