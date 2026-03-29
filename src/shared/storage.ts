@@ -17,7 +17,7 @@ export async function loadSettings(): Promise<ExtensionSettings> {
     whitelistHandles: DEFAULT_SETTINGS.whitelistHandles,
   });
   return {
-    mode: isMode(stored.mode) ? stored.mode : DEFAULT_SETTINGS.mode,
+    mode: normalizeFilterMode(stored.mode),
     whitelistHandles: normalizeWhitelistHandles(stored.whitelistHandles),
   };
 }
@@ -84,7 +84,11 @@ function isMode(value: unknown): value is ExtensionSettings["mode"] {
   return value === "off" || value === "hide" || value === "fade" || value === "debug";
 }
 
-function normalizeWhitelistHandles(value: unknown): string[] {
+export function normalizeFilterMode(value: unknown): ExtensionSettings["mode"] {
+  return isMode(value) ? value : DEFAULT_SETTINGS.mode;
+}
+
+export function normalizeWhitelistHandles(value: unknown): string[] {
   if (!Array.isArray(value)) {
     return DEFAULT_SETTINGS.whitelistHandles;
   }
@@ -99,7 +103,7 @@ function normalizeWhitelistHandles(value: unknown): string[] {
   ).sort((left, right) => left.localeCompare(right));
 }
 
-function normalizeStats(value: unknown): DetectionStats {
+export function normalizeStats(value: unknown): DetectionStats {
   if (!value || typeof value !== "object") {
     return DEFAULT_STATS;
   }
@@ -121,7 +125,7 @@ function readNumber(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
-function normalizeMatchedAccounts(value: unknown): MatchedAccountMap {
+export function normalizeMatchedAccounts(value: unknown): MatchedAccountMap {
   if (!value || typeof value !== "object") {
     return DEFAULT_MATCHED_ACCOUNTS;
   }
@@ -152,7 +156,7 @@ function normalizeMatchedAccounts(value: unknown): MatchedAccountMap {
   return normalized;
 }
 
-function normalizeCollectedAvatars(value: unknown): CollectedAvatarMap {
+export function normalizeCollectedAvatars(value: unknown): CollectedAvatarMap {
   if (!value || typeof value !== "object") {
     return DEFAULT_COLLECTED_AVATARS;
   }

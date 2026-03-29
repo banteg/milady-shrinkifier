@@ -1,12 +1,17 @@
 import { For, Show, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { render } from "solid-js/web";
 
-import { DEFAULT_SETTINGS } from "./shared/constants";
+import { DEFAULT_SETTINGS, DEFAULT_STATS } from "./shared/constants";
 import {
   loadCollectedAvatars,
   loadMatchedAccounts,
   loadSettings,
   loadStats,
+  normalizeCollectedAvatars,
+  normalizeFilterMode,
+  normalizeMatchedAccounts,
+  normalizeStats,
+  normalizeWhitelistHandles,
   resetCollectedAvatars,
   resetMatchedAccounts,
   resetStats,
@@ -365,7 +370,7 @@ function App() {
   const [tab, setTab] = createSignal<TabId>("stats");
   const [accountSearch, setAccountSearch] = createSignal("");
   const [settings, setSettings] = createSignal(DEFAULT_SETTINGS);
-  const [stats, setStats] = createSignal<DetectionStats>(emptyStats());
+  const [stats, setStats] = createSignal<DetectionStats>(DEFAULT_STATS);
   const [matchedAccounts, setMatchedAccounts] = createSignal<MatchedAccountMap>({});
   const [collectedAvatars, setCollectedAvatars] = createSignal<CollectedAvatarMap>({});
 
@@ -425,7 +430,7 @@ function App() {
     ) => {
       if (area === "sync") {
         if (changes.mode) {
-          setSettings((current) => ({ ...current, mode: getStoredMode(changes.mode.newValue) }));
+          setSettings((current) => ({ ...current, mode: normalizeFilterMode(changes.mode.newValue) }));
         }
         if (changes.whitelistHandles) {
           setSettings((current) => ({
@@ -669,163 +674,6 @@ function App() {
 }
 
 render(() => <App />, document.getElementById("app")!);
-
-function getStoredMode(value: unknown): FilterMode {
-  if (value === "hide" || value === "fade" || value === "debug" || value === "off") {
-    return value;
-  }
-  return DEFAULT_SETTINGS.mode;
-}
-
-function normalizeStats(value: unknown): DetectionStats {
-  if (!value || typeof value !== "object") {
-    return emptyStats();
-  }
-
-  const candidate = value as Partial<DetectionStats>;
-  return {
-    tweetsScanned: readNumber(candidate.tweetsScanned),
-    avatarsChecked: readNumber(candidate.avatarsChecked),
-    cacheHits: readNumber(candidate.cacheHits),
-    postsMatched: readNumber(candidate.postsMatched),
-    modelMatches: readNumber((candidate as Record<string, unknown>).modelMatches)
-      || readNumber((candidate as Record<string, unknown>).onnxMatches),
-    errors: readNumber(candidate.errors),
-    lastMatchAt: typeof candidate.lastMatchAt === "string" ? candidate.lastMatchAt : null,
-  };
-}
-
-function normalizeWhitelistHandles(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return Array.from(
-    new Set(
-      value
-        .filter((handle): handle is string => typeof handle === "string")
-        .map((handle) => handle.trim().replace(/^@+/, "").toLowerCase())
-        .filter((handle) => handle.length > 0),
-    ),
-  ).sort((left, right) => left.localeCompare(right));
-}
-
-function normalizeMatchedAccounts(value: unknown): MatchedAccountMap {
-  if (!value || typeof value !== "object") {
-    return {};
-  }
-
-  const normalized: MatchedAccountMap = {};
-  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-    if (!entry || typeof entry !== "object") {
-      continue;
-    }
-    const candidate = entry as Partial<MatchedAccount>;
-    const handle = typeof candidate.handle === "string" && candidate.handle.length > 0
-      ? candidate.handle
-      : key;
-    const normalizedHandle = handle.trim().replace(/^@+/, "").toLowerCase();
-    if (!normalizedHandle) {
-      continue;
-    }
-    normalized[normalizedHandle] = {
-      handle: normalizedHandle,
-      displayName: typeof candidate.displayName === "string" ? candidate.displayName : null,
-      postsMatched: readNumber(candidate.postsMatched),
-      lastMatchedAt: typeof candidate.lastMatchedAt === "string" ? candidate.lastMatchedAt : null,
-    };
-  }
-  return normalized;
-}
-
-function normalizeCollectedAvatars(value: unknown): CollectedAvatarMap {
-  if (!value || typeof value !== "object") {
-    return {};
-  }
-
-  const normalized: CollectedAvatarMap = {};
-  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-    if (!entry || typeof entry !== "object") {
-      continue;
-    }
-
-    const candidate = entry as Partial<CollectedAvatar>;
-    const normalizedUrl =
-      typeof candidate.normalizedUrl === "string" && candidate.normalizedUrl.length > 0
-        ? candidate.normalizedUrl
-        : key;
-    if (!normalizedUrl) {
-      continue;
-    }
-
-    normalized[normalizedUrl] = {
-      normalizedUrl,
-      originalUrl:
-        typeof candidate.originalUrl === "string" && candidate.originalUrl.length > 0
-          ? candidate.originalUrl
-          : normalizedUrl,
-      handles: normalizeStringArray(candidate.handles, true),
-      displayNames: normalizeStringArray(candidate.displayNames, false),
-      sourceSurfaces: normalizeStringArray(candidate.sourceSurfaces, false),
-      seenCount: readNumber(candidate.seenCount),
-      firstSeenAt:
-        typeof candidate.firstSeenAt === "string" ? candidate.firstSeenAt : new Date(0).toISOString(),
-      lastSeenAt:
-        typeof candidate.lastSeenAt === "string" ? candidate.lastSeenAt : new Date(0).toISOString(),
-      exampleProfileUrl:
-        typeof candidate.exampleProfileUrl === "string" ? candidate.exampleProfileUrl : null,
-      exampleNotificationUrl:
-        typeof candidate.exampleNotificationUrl === "string" ? candidate.exampleNotificationUrl : null,
-      exampleTweetUrl: typeof candidate.exampleTweetUrl === "string" ? candidate.exampleTweetUrl : null,
-      heuristicMatch:
-        typeof candidate.heuristicMatch === "boolean" ? candidate.heuristicMatch : null,
-      heuristicSource:
-        candidate.heuristicSource === "onnx" ? candidate.heuristicSource : null,
-      heuristicScore:
-        typeof candidate.heuristicScore === "number" && Number.isFinite(candidate.heuristicScore)
-          ? candidate.heuristicScore
-          : null,
-      heuristicTokenId:
-        typeof candidate.heuristicTokenId === "number" && Number.isFinite(candidate.heuristicTokenId)
-          ? candidate.heuristicTokenId
-          : null,
-      whitelisted: candidate.whitelisted === true,
-    };
-  }
-
-  return normalized;
-}
-
-function normalizeStringArray(value: unknown, normalizeHandles: boolean): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return Array.from(
-    new Set(
-      value
-        .filter((entry): entry is string => typeof entry === "string")
-        .map((entry) => normalizeHandles ? entry.trim().replace(/^@+/, "").toLowerCase() : entry.trim())
-        .filter((entry) => entry.length > 0),
-    ),
-  ).sort((left, right) => left.localeCompare(right));
-}
-
-function readNumber(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-
-function emptyStats(): DetectionStats {
-  return {
-    tweetsScanned: 0,
-    avatarsChecked: 0,
-    cacheHits: 0,
-    postsMatched: 0,
-    modelMatches: 0,
-    errors: 0,
-    lastMatchAt: null,
-  };
-}
 
 function formatNumber(value: number): string {
   return new Intl.NumberFormat().format(value);
