@@ -318,6 +318,7 @@ a {
   height: 100%;
   border-radius: 999px;
   background: #7b8794;
+  width: var(--score-percent, 0%);
 }
 
 .score-bar[data-predicted-label="milady"] .score-bar-fill {
@@ -337,6 +338,7 @@ a {
   top: -2px;
   bottom: -2px;
   width: 2px;
+  left: var(--threshold-percent, 0%);
   margin-left: -1px;
   background: #111;
 }

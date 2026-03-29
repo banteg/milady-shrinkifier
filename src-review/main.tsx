@@ -898,22 +898,31 @@ function App() {
                         >
                           <img src={imageUrl(entry.item.sha256)} alt={entry.item.sha256} />
                           <Show when={scoreBarPercent(entry.item.maxModelScore) != null}>
-                            {(scorePercent) => (
+                            <Show
+                              when={scoreBarPercent(entry.item.latestModelThreshold) != null}
+                              fallback={
+                                <div
+                                  class="score-bar"
+                                  data-predicted-label={entry.item.latestModelPredictedLabel ?? "unscored"}
+                                  aria-label={`p ${formatScore(entry.item.maxModelScore)} t ${formatScore(entry.item.latestModelThreshold)}`}
+                                  style={`--score-percent: ${scoreBarPercent(entry.item.maxModelScore)}%;`}
+                                >
+                                  <div class="score-bar-fill" />
+                                </div>
+                              }
+                            >
                               <div
                                 class="score-bar"
                                 data-predicted-label={entry.item.latestModelPredictedLabel ?? "unscored"}
                                 aria-label={`p ${formatScore(entry.item.maxModelScore)} t ${formatScore(entry.item.latestModelThreshold)}`}
+                                style={`--score-percent: ${scoreBarPercent(entry.item.maxModelScore)}%; --threshold-percent: ${scoreBarPercent(entry.item.latestModelThreshold)}%;`}
                               >
-                                <div class="score-bar-fill" style={{ width: `${scorePercent()}%` }} />
-                                <Show when={scoreBarPercent(entry.item.latestModelThreshold) != null}>
-                                  {(thresholdPercent) => (
-                                    <div class="score-bar-threshold" style={{ left: `${thresholdPercent()}%` }}>
-                                      <span class="score-bar-threshold-text">t</span>
-                                    </div>
-                                  )}
-                                </Show>
+                                <div class="score-bar-fill" />
+                                <div class="score-bar-threshold">
+                                  <span class="score-bar-threshold-text">t</span>
+                                </div>
                               </div>
-                            )}
+                            </Show>
                           </Show>
                           <div class="batch-caption">
                             <span class="batch-caption-left">{batchTileKeys[itemIndex()]}</span>
