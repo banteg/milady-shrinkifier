@@ -27,3 +27,8 @@ milady = "milady.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["milady"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
