@@ -195,6 +195,16 @@ function scheduleDelayedProcessVisibleTweets(): void {
   }, 350);
 }
 
+function reapplyModeToVisibleTweets(): void {
+  for (const tweet of Array.from(visibleTweets)) {
+    if (!tweet.isConnected) {
+      visibleTweets.delete(tweet);
+      continue;
+    }
+    applyMode(tweet, processed.get(tweet));
+  }
+}
+
 async function processTweet(tweet: HTMLElement): Promise<void> {
   try {
     const avatar = findAvatar(tweet);
@@ -605,6 +615,7 @@ function injectStyles(): void {
 function observeStorage(): void {
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === "sync" && (changes.mode || changes.whitelistHandles)) {
+      const previousMode = settings.mode;
       const nextMode = changes.mode?.newValue;
       settings = {
         mode: isFilterMode(nextMode) ? nextMode : settings.mode,
@@ -612,6 +623,9 @@ function observeStorage(): void {
           changes.whitelistHandles?.newValue ?? settings.whitelistHandles,
         ),
       };
+      if (changes.mode && settings.mode !== previousMode) {
+        reapplyModeToVisibleTweets();
+      }
       scheduleProcessVisibleTweets();
     }
 
