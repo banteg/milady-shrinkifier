@@ -306,11 +306,27 @@ a {
   display: block;
 }
 
+.batch-meter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 0;
+}
+
+.batch-meter-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: #666;
+  line-height: 1;
+}
+
 .score-bar {
   position: relative;
-  height: 10px;
+  flex: 1;
+  height: 12px;
   background: #e7e7e1;
-  border-top: 1px solid #d7d7d2;
+  border: 1px solid #d7d7d2;
+  border-radius: 999px;
   overflow: hidden;
 }
 
@@ -333,12 +349,23 @@ a {
 
 .score-bar-threshold {
   position: absolute;
-  top: -2px;
-  bottom: -2px;
+  top: -1px;
+  bottom: -1px;
   width: 3px;
   margin-left: -1.5px;
   background: #111;
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.5);
+}
+
+.score-bar-threshold-text {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -52%);
+  font-size: 8px;
+  font-weight: 700;
+  color: white;
+  line-height: 1;
 }
 
 .batch-caption {
@@ -353,13 +380,7 @@ a {
 .batch-caption-left {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
   min-width: 0;
-}
-
-.batch-score-text {
-  color: #666;
-  font-variant-numeric: tabular-nums;
 }
 
 .batch-badge {

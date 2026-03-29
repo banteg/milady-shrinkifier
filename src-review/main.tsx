@@ -899,27 +899,27 @@ function App() {
                           <img src={imageUrl(entry.item.sha256)} alt={entry.item.sha256} />
                           <Show when={scoreBarPercent(entry.item.maxModelScore) != null}>
                             {(scorePercent) => (
-                              <div
-                                class="score-bar"
-                                data-predicted-label={entry.item.latestModelPredictedLabel ?? "unscored"}
-                                aria-label={`p ${formatScore(entry.item.maxModelScore)} t ${formatScore(entry.item.latestModelThreshold)}`}
-                              >
-                                <div class="score-bar-fill" style={{ width: `${scorePercent()}%` }} />
-                                <Show when={scoreBarPercent(entry.item.latestModelThreshold) != null}>
-                                  {(thresholdPercent) => (
-                                    <div class="score-bar-threshold" style={{ left: `${thresholdPercent()}%` }} />
-                                  )}
-                                </Show>
+                              <div class="batch-meter">
+                                <span class="batch-meter-label">p</span>
+                                <div
+                                  class="score-bar"
+                                  data-predicted-label={entry.item.latestModelPredictedLabel ?? "unscored"}
+                                  aria-label={`p ${formatScore(entry.item.maxModelScore)} t ${formatScore(entry.item.latestModelThreshold)}`}
+                                >
+                                  <div class="score-bar-fill" style={{ width: `${scorePercent()}%` }} />
+                                  <Show when={scoreBarPercent(entry.item.latestModelThreshold) != null}>
+                                    {(thresholdPercent) => (
+                                      <div class="score-bar-threshold" style={{ left: `${thresholdPercent()}%` }}>
+                                        <span class="score-bar-threshold-text">t</span>
+                                      </div>
+                                    )}
+                                  </Show>
+                                </div>
                               </div>
                             )}
                           </Show>
                           <div class="batch-caption">
-                            <span class="batch-caption-left">
-                              <span>{batchTileKeys[itemIndex()]}</span>
-                              <Show when={entry.item.maxModelScore != null}>
-                                <span class="batch-score-text">{`p ${formatScore(entry.item.maxModelScore)}`}</span>
-                              </Show>
-                            </span>
+                            <span class="batch-caption-left">{batchTileKeys[itemIndex()]}</span>
                             <span class="batch-badge">{shortLabel(entry.assignedLabel)}</span>
                           </div>
                         </button>
