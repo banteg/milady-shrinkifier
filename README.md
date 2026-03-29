@@ -34,22 +34,23 @@ There is no Chrome Web Store release. Install from [GitHub Releases](https://git
 
 ## Accuracy
 
-All scores below come from the current exported evaluation corpus: deduped exported avatars labeled `manual` or `model`.
+All scores below come from the current manually reviewed exported corpus.
 
 - **Precision** — when the extension filters a post, how often it's right.
 - **Recall** — of the Milady-style avatars in the evaluation set, how many it catches.
-- **Evaluation corpus** — `8,496` exported avatars (`390` milady, `8,106` not_milady).
-- This is a broader product-facing snapshot than the blind split, but it is not a blind benchmark.
+- **Evaluation corpus** — `7,695` exported avatars (`437` milady, `7,258` not_milady).
+- This is broader than the blind split and still fully human-labeled, but it is not a blind benchmark.
 
 | Version | Run | Training mix | Precision | Recall |
 | --- | --- | --- | --- | --- |
-| `v0.2.2` | `20260327T142224Z` | Milady Maker + `2,596` manually tagged avatars | `0.9957` | `0.5872` |
-| `v0.3.0` | `20260327T212453Z` | + Remilio, Pixelady + `2,967` manually tagged avatars | `0.9964` | `0.7051` |
-| `v0.4.0` | `20260328T144735Z` | + `5,715` manually tagged avatars | `0.9965` | `0.7205` |
-| `v0.5.0` | `20260328T223931Z` | + `6,773` manually tagged avatars | `1.0000` | `0.9077` |
-| `v0.6.0` | `20260329T124912Z` | + `7,370` human-reviewed avatars | `0.9971` | `0.8769` |
+| `v0.2.2` | `20260327T142224Z` | Milady Maker + `2,596` manually tagged avatars | `0.9961` | `0.5904` |
+| `v0.3.0` | `20260327T212453Z` | + Remilio, Pixelady + `2,967` manually tagged avatars | `1.0000` | `0.7208` |
+| `v0.4.0` | `20260328T144735Z` | + `5,715` manually tagged avatars | `0.9971` | `0.7918` |
+| `v0.5.0` | `20260328T223931Z` | + `6,773` manually tagged avatars | `0.9952` | `0.9451` |
+| `v0.6.0` | `20260329T124912Z` | + `7,370` human-reviewed avatars | `0.9952` | `0.9474` |
+| `Current` | `20260329T181946Z` | + `7,695` human-reviewed avatars | `0.9951` | `0.9291` |
 
-All rows were re-evaluated on the same exported evaluation corpus on March 29, 2026, so they are directly comparable.
+All rows were re-evaluated on the same manually reviewed exported corpus on March 29, 2026, so they are directly comparable.
 
 ## Development
 
