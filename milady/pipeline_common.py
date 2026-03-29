@@ -343,9 +343,7 @@ def discover_export_paths(inputs: list[str]) -> list[Path]:
     if inputs:
         paths = [Path(value) for value in inputs]
     else:
-        inbox_paths = sorted(INGEST_ROOT.glob("*.json"))
-        legacy_paths = sorted(CACHE_ROOT.glob("milady-shrinkifier-avatars-*.json"))
-        paths = inbox_paths if inbox_paths else legacy_paths
+        paths = sorted(INGEST_ROOT.glob("*.json"))
     return [path for path in paths if path.exists()]
 
 

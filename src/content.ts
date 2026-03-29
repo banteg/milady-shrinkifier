@@ -353,7 +353,6 @@ async function detectAvatarUncached(normalizedUrl: string): Promise<DetectionRes
       matched: score >= resolvedModel.metadata.threshold,
       source: score >= resolvedModel.metadata.threshold ? "onnx" : null,
       score,
-      tokenId: null,
       debugLabel: formatProbabilityDebugLabel(score, resolvedModel.metadata.threshold),
     };
   } catch (error) {
@@ -363,7 +362,6 @@ async function detectAvatarUncached(normalizedUrl: string): Promise<DetectionRes
       matched: false,
       source: null,
       score: null,
-      tokenId: null,
       debugLabel: "err",
     };
   }

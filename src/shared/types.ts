@@ -49,17 +49,14 @@ export interface ModelMetadata {
   mean?: [number, number, number];
   std?: [number, number, number];
   positiveIndex?: number;
-  collection?: string;
   generatedAt: string;
   threshold: number;
-  inputLength?: number;
 }
 
 export interface DetectionResult {
   matched: boolean;
   source: "onnx" | null;
   score: number | null;
-  tokenId: number | null;
   debugLabel?: string | null;
 }
 

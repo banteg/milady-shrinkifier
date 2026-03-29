@@ -30,8 +30,6 @@ class CollectionSpec:
     name: str
     total_supply: int
     target_count: int
-    source: str
-    label_source: str
     contract: str | None = None
     token_id_start: int = 1
     image_url_templates: tuple[str, ...] = ()
@@ -45,8 +43,6 @@ COLLECTIONS: tuple[CollectionSpec, ...] = (
         name="Milady Maker",
         total_supply=10_000,
         target_count=10_000,
-        source="milady-maker",
-        label_source="collection_corpus",
         token_id_start=0,
         image_url_templates=(
             "https://www.miladymaker.net/milady/{token_id}.png",
@@ -58,8 +54,6 @@ COLLECTIONS: tuple[CollectionSpec, ...] = (
         name="Redacted Remilio Babies",
         total_supply=10_000,
         target_count=2_000,
-        source="remilio",
-        label_source="collection_corpus",
         contract="0xD3D9ddd0CF0A5F0BFB8f7fcEAe075DF687eAEBaB",
         metadata_url_template="https://remilio.org/remilio/json/{token_id}",
     ),
@@ -68,12 +62,12 @@ COLLECTIONS: tuple[CollectionSpec, ...] = (
         name="Pixelady Maker",
         total_supply=10_000,
         target_count=1_000,
-        source="pixelady",
-        label_source="collection_corpus",
         contract="0x8Fc0D90f2C45a5e7f94904075c952e0943CFCCfd",
         metadata_url_template="ipfs://bafybeigd7557iwardhnwg5kbmg2s7tmuxqkstjeoixu7wunooiywbb3jqq/{token_id}",
     ),
 )
+
+COLLECTION_LABEL_SOURCE = "collection_corpus"
 
 
 @dataclass(slots=True)
@@ -108,16 +102,10 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     selected = [collection for collection in COLLECTIONS if not args.collections or collection.slug in args.collections]
-    selected_slugs = {collection.slug for collection in selected}
-    existing_manifest = read_existing_manifest_collections()
     manifest_payload: dict[str, object] = {
         "version": 1,
         "generatedAt": None,
-        "collections": [
-            existing_manifest[collection.slug]
-            for collection in COLLECTIONS
-            if collection.slug in existing_manifest and collection.slug not in selected_slugs
-        ],
+        "collections": [],
     }
 
     with httpx.Client(
@@ -151,8 +139,8 @@ def main() -> None:
                 "contract": collection.contract,
                 "totalSupply": collection.total_supply,
                 "targetCount": collection.target_count,
-                "source": collection.source,
-                "labelSource": collection.label_source,
+                "source": collection.slug,
+                "labelSource": COLLECTION_LABEL_SOURCE,
                 "sampleCount": len(token_ids),
                 "downloadedCount": len(successful_results),
                 "failedCount": len(failed_results),
@@ -182,24 +170,6 @@ def main() -> None:
     manifest_payload["generatedAt"] = datetime.now(UTC).isoformat()
     write_json_file(COLLECTION_MANIFEST_PATH, manifest_payload)
     print(f"Wrote collection manifest to {COLLECTION_MANIFEST_PATH}")
-
-
-def read_existing_manifest_collections() -> dict[str, dict[str, object]]:
-    if not COLLECTION_MANIFEST_PATH.exists():
-        return {}
-    existing_manifest = json.loads(COLLECTION_MANIFEST_PATH.read_text())
-    collections = existing_manifest.get("collections")
-    if not isinstance(collections, list):
-        return {}
-
-    by_slug: dict[str, dict[str, object]] = {}
-    for entry in collections:
-        if not isinstance(entry, dict):
-            continue
-        slug = entry.get("slug")
-        if isinstance(slug, str):
-            by_slug[slug] = entry
-    return by_slug
 
 
 def sample_token_ids(collection: CollectionSpec) -> list[int]:

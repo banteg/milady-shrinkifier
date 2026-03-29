@@ -7,7 +7,7 @@ from pathlib import Path
 
 from sklearn.model_selection import StratifiedGroupKFold
 
-from .download_collection_samples import COLLECTIONS as NFT_COLLECTIONS
+from .download_collection_samples import COLLECTIONS as NFT_COLLECTIONS, COLLECTION_LABEL_SOURCE
 from .mobilenet_common import DatasetEntry, SPLIT_SEED, dataset_entries_to_jsonl
 from .pipeline_common import (
     COLLECTION_MANIFEST_PATH,
@@ -304,11 +304,11 @@ def build_sample_records(connection, cache_connection, model_label_weight: float
                 sample_id=f"collection:{collection.slug}:{token_id}",
                 path=path,
                 label="milady",
-                source=collection.source,
+                source=collection.slug,
                 raw_sha=fingerprint.raw_sha,
                 pixel_digest=fingerprint.pixel_digest,
                 perceptual_hash=fingerprint.perceptual_hash,
-                label_source=collection.label_source,
+                label_source=COLLECTION_LABEL_SOURCE,
                 label_tier="trusted",
                 sample_weight=TRUSTED_COLLECTION_WEIGHT,
                 blind_eval_eligible=False,

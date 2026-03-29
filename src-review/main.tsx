@@ -23,9 +23,6 @@ interface ReviewItem {
   label: ReviewLabel | null;
   labelSource: string | null;
   localPath: string;
-  byteSize: number | null;
-  width: number | null;
-  height: number | null;
   handles: string[];
   displayNames: string[];
   sourceSurfaces: string[];
@@ -42,16 +39,13 @@ interface ReviewItem {
   exampleNotificationUrl: string | null;
   exampleTweetUrl: string | null;
   lastSeenAt: string | null;
-  imageUrlCount: number;
 }
 
 interface SummaryPayload {
-  catalogPath: string;
   selectedRunId: string | null;
   availableRunIds: string[];
   totalImages: number;
   queueCounts: Record<QueueName, number>;
-  labelCounts: Record<ReviewLabel, number>;
   needsReview: number;
   canUndo: boolean;
 }
@@ -264,7 +258,7 @@ function renderStatusPills(item: ReviewItem) {
   }
   if (item.label) {
     pills.push({
-      text: `${item.labelSource ?? "human"} ${item.label}`,
+      text: `${item.labelSource ?? "n/a"} ${item.label}`,
       tone: item.label === "not_milady" ? "good" : "warn",
     });
   }
