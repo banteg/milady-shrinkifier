@@ -308,25 +308,37 @@ a {
 
 .score-bar {
   position: relative;
-  height: 8px;
-  background: #ecece7;
+  height: 10px;
+  background: #e7e7e1;
   border-top: 1px solid #d7d7d2;
   overflow: hidden;
 }
 
 .score-bar-fill {
   height: 100%;
+  background: #7b8794;
+}
+
+.score-bar[data-predicted-label="milady"] .score-bar-fill {
+  background: #d4692d;
+}
+
+.score-bar[data-predicted-label="not_milady"] .score-bar-fill {
   background: #1a7f37;
+}
+
+.score-bar[data-predicted-label="unclear"] .score-bar-fill {
+  background: #b08900;
 }
 
 .score-bar-threshold {
   position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  margin-left: -1px;
+  top: -2px;
+  bottom: -2px;
+  width: 3px;
+  margin-left: -1.5px;
   background: #111;
-  opacity: 0.9;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.5);
 }
 
 .batch-caption {
@@ -336,6 +348,18 @@ a {
   gap: 8px;
   padding: 6px 8px;
   font-size: 11px;
+}
+
+.batch-caption-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.batch-score-text {
+  color: #666;
+  font-variant-numeric: tabular-nums;
 }
 
 .batch-badge {
