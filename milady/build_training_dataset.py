@@ -266,8 +266,7 @@ def main() -> None:
                 "version": 2,
                 "generatedAt": now_iso(),
                 "mode": manifest_mode,
-                    "evaluationPolicy": {
-                        "blindEvalRequiresGoldOnly": False,
+                "evaluationPolicy": {
                         "blindEvalIncludesCollectionHoldoutPositives": True,
                         "goldLabelSource": GOLD_LABEL_SOURCE,
                         "trustedLabelSources": sorted(TRUSTED_LABEL_SOURCES),
