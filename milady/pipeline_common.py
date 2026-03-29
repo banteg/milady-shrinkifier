@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import imagehash
 from PIL import Image
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -117,6 +118,7 @@ class FileFingerprint:
     image_size: int
     raw_sha: str
     pixel_digest: str
+    perceptual_hash: str
     width: int | None
     height: int | None
     readable: bool
@@ -262,14 +264,20 @@ def init_offline_cache_db(connection: sqlite3.Connection) -> None:
           image_size INTEGER NOT NULL,
           raw_sha TEXT NOT NULL,
           pixel_digest TEXT NOT NULL,
+          perceptual_hash TEXT NOT NULL DEFAULT '',
           width INTEGER,
           height INTEGER,
           readable INTEGER NOT NULL,
           updated_at TEXT NOT NULL
         );
-
+        """
+    )
+    ensure_column(connection, "file_fingerprints", "perceptual_hash", "TEXT NOT NULL DEFAULT ''")
+    connection.executescript(
+        """
         CREATE INDEX IF NOT EXISTS idx_file_fingerprints_raw_sha ON file_fingerprints(raw_sha);
         CREATE INDEX IF NOT EXISTS idx_file_fingerprints_pixel_digest ON file_fingerprints(pixel_digest);
+        CREATE INDEX IF NOT EXISTS idx_file_fingerprints_perceptual_hash ON file_fingerprints(perceptual_hash);
         """
     )
     connection.commit()
@@ -387,12 +395,14 @@ def get_file_fingerprint(connection: sqlite3.Connection, path: Path, image_size:
         (str(resolved_path), stat_result.st_size, stat_result.st_mtime_ns, image_size),
     ).fetchone()
     if cache_row is not None:
-        return row_to_file_fingerprint(cache_row)
+        if str(cache_row["perceptual_hash"] or ""):
+            return row_to_file_fingerprint(cache_row)
 
     updated_at = now_iso()
     readable = True
     raw_sha = ""
     pixel_digest = ""
+    perceptual_hash = ""
     width: int | None = None
     height: int | None = None
     try:
@@ -400,8 +410,10 @@ def get_file_fingerprint(connection: sqlite3.Connection, path: Path, image_size:
         raw_sha = sha256_bytes(payload)
         with Image.open(BytesIO(payload)) as image:
             width, height = image.size
-            prepared = image.convert("RGB").resize((image_size, image_size), Image.Resampling.BICUBIC)
+            prepared_source = image.convert("RGB")
+            prepared = prepared_source.resize((image_size, image_size), Image.Resampling.BICUBIC)
             pixel_digest = sha256_bytes(prepared.tobytes())
+            perceptual_hash = str(imagehash.phash(prepared_source))
     except Exception:  # noqa: BLE001
         readable = False
 
@@ -414,17 +426,19 @@ def get_file_fingerprint(connection: sqlite3.Connection, path: Path, image_size:
           image_size,
           raw_sha,
           pixel_digest,
+          perceptual_hash,
           width,
           height,
           readable,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(path) DO UPDATE SET
           file_size = excluded.file_size,
           mtime_ns = excluded.mtime_ns,
           image_size = excluded.image_size,
           raw_sha = excluded.raw_sha,
           pixel_digest = excluded.pixel_digest,
+          perceptual_hash = excluded.perceptual_hash,
           width = excluded.width,
           height = excluded.height,
           readable = excluded.readable,
@@ -437,6 +451,7 @@ def get_file_fingerprint(connection: sqlite3.Connection, path: Path, image_size:
             image_size,
             raw_sha,
             pixel_digest,
+            perceptual_hash,
             width,
             height,
             1 if readable else 0,
@@ -450,6 +465,7 @@ def get_file_fingerprint(connection: sqlite3.Connection, path: Path, image_size:
         image_size=image_size,
         raw_sha=raw_sha,
         pixel_digest=pixel_digest,
+        perceptual_hash=perceptual_hash,
         width=width,
         height=height,
         readable=readable,
@@ -465,6 +481,7 @@ def row_to_file_fingerprint(row: sqlite3.Row) -> FileFingerprint:
         image_size=int(row["image_size"]),
         raw_sha=str(row["raw_sha"]),
         pixel_digest=str(row["pixel_digest"]),
+        perceptual_hash=str(row["perceptual_hash"]),
         width=int(row["width"]) if row["width"] is not None else None,
         height=int(row["height"]) if row["height"] is not None else None,
         readable=bool(row["readable"]),
