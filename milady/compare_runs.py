@@ -6,7 +6,7 @@ from pathlib import Path
 
 import torch
 
-from .mobilenet_common import DatasetEntry, compute_metrics, create_model, load_dataset_entries, probabilities_from_model
+from .mobilenet_common import DatasetEntry, choose_threshold, compute_metrics, create_model, load_dataset_entries, probabilities_from_model
 from .pipeline_common import MODEL_COMPARE_ROOT, MODEL_RUN_ROOT, SPLIT_MANIFEST_PATH, SPLIT_ROOT, connect_offline_cache_db, ensure_layout
 from .wire import (
     CompareErrorItem,
@@ -14,7 +14,6 @@ from .wire import (
     CompareSummary,
     CompareSummaryEvaluationPolicy,
     DiagnosticBucket,
-    MetricSummary,
     RunSummary,
     SplitManifest,
     dump_json,
@@ -60,7 +59,7 @@ def run_compare(
     batch_size: int = 64,
     force_cpu: bool = False,
     output_dir: Path | None = None,
-) -> tuple[dict[str, object], Path]:
+) -> tuple[CompareSummary, Path]:
     run_ids = dedupe(run_ids)
     if len(run_ids) < 2:
         raise SystemExit("Pass at least two --run-id values.")
@@ -102,7 +101,7 @@ def run_compare(
             threshold, val_metrics = choose_threshold(val_probabilities, val_labels, precision_floor)
             print(
                 f"[compare:{run_id}] validation done threshold={threshold:.4f} "
-                f"precision={val_metrics['precision']:.4f} recall={val_metrics['recall']:.4f}",
+                f"precision={val_metrics.precision:.4f} recall={val_metrics.recall:.4f}",
                 flush=True,
             )
             print(f"[compare:{run_id}] evaluating test split", flush=True)
@@ -117,16 +116,16 @@ def run_compare(
             dump_json(false_positives_path, false_positives)
             dump_json(false_negatives_path, false_negatives)
             print(
-                f"[compare:{run_id}] test done precision={test_metrics['precision']:.4f} "
-                f"recall={test_metrics['recall']:.4f} fp={len(false_positives)} fn={len(false_negatives)}",
+                f"[compare:{run_id}] test done precision={test_metrics.precision:.4f} "
+                f"recall={test_metrics.recall:.4f} fp={len(false_positives)} fn={len(false_negatives)}",
                 flush=True,
             )
 
             result_runs[run_id] = CompareRunSummary(
                 threshold=threshold,
                 precision_floor=precision_floor,
-                val_metrics=metric_summary_from_dict(val_metrics),
-                test_metrics=metric_summary_from_dict(test_metrics),
+                val_metrics=val_metrics,
+                test_metrics=test_metrics,
                 val_diagnostics_by_source=diagnostic_metrics_by(val_entries, val_probabilities, threshold),
                 test_diagnostics_by_source=diagnostic_metrics_by(test_entries, test_probabilities, threshold),
                 false_positive_count=len(false_positives),
@@ -246,13 +245,6 @@ def evaluate(
     labels = [1 if entry.label == "milady" else 0 for entry in entries]
     return probabilities, labels
 
-
-def choose_threshold(probabilities: list[float], labels: list[int], precision_floor: float) -> tuple[float, dict[str, float]]:
-    from .mobilenet_common import choose_threshold as choose_threshold_impl
-
-    return choose_threshold_impl(probabilities, labels, precision_floor)
-
-
 def collect_errors(
     entries,
     probabilities: list[float],
@@ -304,29 +296,14 @@ def diagnostic_metrics_by(entries, probabilities: list[float], threshold: float)
                 continue
             grouped_metrics[value] = DiagnosticBucket(
                 count=len(indices),
-                metrics=metric_summary_from_dict(
-                    compute_metrics(
-                        [probabilities[index] for index in indices],
-                        [1 if entries[index].label == "milady" else 0 for index in indices],
-                        threshold,
-                    )
+                metrics=compute_metrics(
+                    [probabilities[index] for index in indices],
+                    [1 if entries[index].label == "milady" else 0 for index in indices],
+                    threshold,
                 ),
             )
         diagnostics[group_name] = grouped_metrics
     return diagnostics
-
-
-def metric_summary_from_dict(metrics: dict[str, float]) -> MetricSummary:
-    return MetricSummary(
-        accuracy=metrics["accuracy"],
-        precision=metrics["precision"],
-        recall=metrics["recall"],
-        f1=metrics["f1"],
-        true_positive=metrics["truePositive"],
-        false_positive=metrics["falsePositive"],
-        true_negative=metrics["trueNegative"],
-        false_negative=metrics["falseNegative"],
-    )
 
 
 if __name__ == "__main__":

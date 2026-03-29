@@ -23,7 +23,7 @@ from .pipeline_common import (
     inference_variant_cache_path,
     write_npz_atomic,
 )
-from .wire import DatasetEntryPayload, dump_jsonl, load_jsonl
+from .wire import DatasetEntryPayload, MetricSummary, dump_jsonl, load_jsonl
 
 MODEL_IMAGE_SIZE = 128
 MODEL_MEAN = [0.485, 0.456, 0.406]
@@ -136,7 +136,7 @@ def load_dataset_entries(path: Path) -> list[DatasetEntry]:
     ]
 
 
-def compute_metrics(probabilities: list[float], labels: list[int], threshold: float) -> dict[str, float]:
+def compute_metrics(probabilities: list[float], labels: list[int], threshold: float) -> MetricSummary:
     true_positive = 0
     false_positive = 0
     true_negative = 0
@@ -158,19 +158,19 @@ def compute_metrics(probabilities: list[float], labels: list[int], threshold: fl
     accuracy = (true_positive + true_negative) / max(1, len(labels))
     f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
 
-    return {
-        "accuracy": accuracy,
-        "precision": precision,
-        "recall": recall,
-        "f1": f1,
-        "truePositive": float(true_positive),
-        "falsePositive": float(false_positive),
-        "trueNegative": float(true_negative),
-        "falseNegative": float(false_negative),
-    }
+    return MetricSummary(
+        accuracy=accuracy,
+        precision=precision,
+        recall=recall,
+        f1=f1,
+        true_positive=float(true_positive),
+        false_positive=float(false_positive),
+        true_negative=float(true_negative),
+        false_negative=float(false_negative),
+    )
 
 
-def choose_threshold(probabilities: list[float], labels: list[int], precision_floor: float) -> tuple[float, dict[str, float]]:
+def choose_threshold(probabilities: list[float], labels: list[int], precision_floor: float) -> tuple[float, MetricSummary]:
     if not probabilities:
         return 0.995, compute_metrics(probabilities, labels, 0.995)
 
@@ -182,15 +182,15 @@ def choose_threshold(probabilities: list[float], labels: list[int], precision_fl
     passing_candidates = [
         (threshold, metrics)
         for threshold, metrics in scored_candidates
-        if metrics["precision"] >= precision_floor
+        if metrics.precision >= precision_floor
     ]
 
     if passing_candidates:
         best_threshold, best_metrics = max(
             passing_candidates,
             key=lambda item: (
-                item[1]["recall"],
-                item[1]["f1"],
+                item[1].recall,
+                item[1].f1,
                 item[0],
             ),
         )
@@ -199,9 +199,9 @@ def choose_threshold(probabilities: list[float], labels: list[int], precision_fl
     best_threshold, best_metrics = max(
         scored_candidates,
         key=lambda item: (
-            item[1]["precision"],
-            item[1]["recall"],
-            item[1]["f1"],
+            item[1].precision,
+            item[1].recall,
+            item[1].f1,
             item[0],
         ),
     )

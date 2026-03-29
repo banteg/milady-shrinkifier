@@ -132,8 +132,8 @@ def main() -> None:
         best_threshold = 0.995
         best_selection_key = (-1.0, -1.0)
         best_epoch = -1
-        best_val_metrics: dict[str, float] | None = None
-        history: list[dict[str, float | int]] = []
+        best_val_metrics: MetricSummary | None = None
+        history: list[RunHistoryEntry] = []
         stale_epochs = 0
         training_started_at = perf_counter()
         completed_epoch_durations: list[float] = []
@@ -172,16 +172,16 @@ def main() -> None:
             epoch_duration_seconds = perf_counter() - epoch_started_at
             completed_epoch_durations.append(epoch_duration_seconds)
             history.append(
-                {
-                    "epoch": epoch,
-                    "phase": phase,
-                    "learningRate": current_learning_rate(optimizer),
-                    "trainLoss": train_loss,
-                    "valPrecision": threshold_metrics["precision"],
-                    "valRecall": threshold_metrics["recall"],
-                    "valF1": threshold_metrics["f1"],
-                    "threshold": threshold,
-                }
+                RunHistoryEntry(
+                    epoch=epoch,
+                    phase=phase,
+                    learning_rate=current_learning_rate(optimizer),
+                    train_loss=train_loss,
+                    val_precision=threshold_metrics.precision,
+                    val_recall=threshold_metrics.recall,
+                    val_f1=threshold_metrics.f1,
+                    threshold=threshold,
+                )
             )
             if wandb_run is not None:
                 wandb.log(
@@ -191,17 +191,17 @@ def main() -> None:
                         "train/loss": train_loss,
                         "train/lr": current_learning_rate(optimizer),
                         "trainer/phase": 0 if phase == "warmup" else 1,
-                        "val/precision": threshold_metrics["precision"],
-                        "val/recall": threshold_metrics["recall"],
-                        "val/f1": threshold_metrics["f1"],
+                        "val/precision": threshold_metrics.precision,
+                        "val/recall": threshold_metrics.recall,
+                        "val/f1": threshold_metrics.f1,
                         "val/threshold": threshold,
                         "timing/epoch_seconds": epoch_duration_seconds,
                         "timing/total_elapsed_seconds": perf_counter() - training_started_at,
                     }
                 )
             selection_key = (
-                threshold_metrics["recall"],
-                threshold_metrics["f1"],
+                threshold_metrics.recall,
+                threshold_metrics.f1,
             )
             improved = selection_key > best_selection_key
             stale_after_epoch = 0 if improved else (stale_epochs + 1 if phase == "finetune" else stale_epochs)
@@ -232,7 +232,7 @@ def main() -> None:
                     stale_epochs = 0
                 print(
                     f"[epoch {epoch}/{args.epochs}] new best checkpoint "
-                    f"(recall={threshold_metrics['recall']:.4f}, threshold={best_threshold:.4f})",
+                    f"(recall={threshold_metrics.recall:.4f}, threshold={best_threshold:.4f})",
                     flush=True,
                 )
             else:
@@ -281,7 +281,6 @@ def main() -> None:
             evaluation_policy=RunEvaluationPolicy(
                 headline=HEADLINE_EVAL_POLICY,
                 train_includes_trusted_synthetic=True,
-                train_includes_weak_labels=False,
             ),
             dataset_splits={
                 "train": split_summary(train_entries),
@@ -290,21 +289,9 @@ def main() -> None:
             },
             best_epoch=best_epoch,
             threshold=best_threshold,
-            history=[
-                RunHistoryEntry(
-                    epoch=int(entry["epoch"]),
-                    phase=str(entry["phase"]),
-                    learning_rate=float(entry["learningRate"]),
-                    train_loss=float(entry["trainLoss"]),
-                    val_precision=float(entry["valPrecision"]),
-                    val_recall=float(entry["valRecall"]),
-                    val_f1=float(entry["valF1"]),
-                    threshold=float(entry["threshold"]),
-                )
-                for entry in history
-            ],
-            val_metrics=metric_summary_from_dict(best_val_metrics),
-            test_metrics=metric_summary_from_dict(test_metrics),
+            history=history,
+            val_metrics=best_val_metrics,
+            test_metrics=test_metrics,
             val_diagnostics_by_source=diagnostic_metrics_by(entries=val_entries, probabilities=val_probabilities, threshold=best_threshold),
             test_diagnostics_by_source=diagnostic_metrics_by(entries=test_entries, probabilities=test_probabilities, threshold=best_threshold),
             checkpoint_path=str(checkpoint_path),
@@ -316,19 +303,19 @@ def main() -> None:
                     "epoch": best_epoch,
                     "best/epoch": best_epoch,
                     "best/threshold": best_threshold,
-                    "best/val_precision": best_val_metrics["precision"],
-                    "best/val_recall": best_val_metrics["recall"],
-                    "best/val_f1": best_val_metrics["f1"],
-                    "headline/val_precision": best_val_metrics["precision"],
-                    "headline/val_recall": best_val_metrics["recall"],
-                    "headline/val_f1": best_val_metrics["f1"],
-                    "test/precision": test_metrics["precision"],
-                    "test/recall": test_metrics["recall"],
-                    "test/f1": test_metrics["f1"],
-                    "test/accuracy": test_metrics["accuracy"],
-                    "headline/test_precision": test_metrics["precision"],
-                    "headline/test_recall": test_metrics["recall"],
-                    "headline/test_f1": test_metrics["f1"],
+                    "best/val_precision": best_val_metrics.precision,
+                    "best/val_recall": best_val_metrics.recall,
+                    "best/val_f1": best_val_metrics.f1,
+                    "headline/val_precision": best_val_metrics.precision,
+                    "headline/val_recall": best_val_metrics.recall,
+                    "headline/val_f1": best_val_metrics.f1,
+                    "test/precision": test_metrics.precision,
+                    "test/recall": test_metrics.recall,
+                    "test/f1": test_metrics.f1,
+                    "test/accuracy": test_metrics.accuracy,
+                    "headline/test_precision": test_metrics.precision,
+                    "headline/test_recall": test_metrics.recall,
+                    "headline/test_f1": test_metrics.f1,
                 }
             )
             summary_artifact = wandb.Artifact(f"{args.run_id}-summary", type="training-summary")
@@ -344,10 +331,10 @@ def main() -> None:
             "[done] "
             f"best_epoch={best_epoch} "
             f"threshold={best_threshold:.4f} "
-            f"blind_val_precision={best_val_metrics['precision']:.4f} "
-            f"blind_val_recall={best_val_metrics['recall']:.4f} "
-            f"blind_test_precision={test_metrics['precision']:.4f} "
-            f"blind_test_recall={test_metrics['recall']:.4f}",
+            f"blind_val_precision={best_val_metrics.precision:.4f} "
+            f"blind_val_recall={best_val_metrics.recall:.4f} "
+            f"blind_test_precision={test_metrics.precision:.4f} "
+            f"blind_test_recall={test_metrics.recall:.4f}",
             flush=True,
         )
         print(encode_json(summary, pretty=True).decode("utf-8"))
@@ -648,7 +635,7 @@ def print_epoch_summary(
     phase: str,
     learning_rate: float,
     threshold: float,
-    threshold_metrics: dict[str, float],
+    threshold_metrics: MetricSummary,
     improved: bool,
     stale_epochs: int,
     patience: int,
@@ -662,9 +649,9 @@ def print_epoch_summary(
         f"phase={phase} "
         f"lr={learning_rate:.6g} "
         f"train_loss={train_loss:.4f} "
-        f"val_precision={threshold_metrics['precision']:.4f} "
-        f"val_recall={threshold_metrics['recall']:.4f} "
-        f"val_f1={threshold_metrics['f1']:.4f} "
+        f"val_precision={threshold_metrics.precision:.4f} "
+        f"val_recall={threshold_metrics.recall:.4f} "
+        f"val_f1={threshold_metrics.f1:.4f} "
         f"threshold={threshold:.4f} "
         f"epoch_time={format_duration(epoch_duration_seconds)} "
         f"total_elapsed={format_duration(total_elapsed_seconds)} "
@@ -720,12 +707,10 @@ def diagnostic_metrics_by(entries: list, probabilities: list[float], threshold: 
                 continue
             grouped_metrics[value] = DiagnosticBucket(
                 count=len(indices),
-                metrics=metric_summary_from_dict(
-                    compute_metrics(
-                        [probabilities[index] for index in indices],
-                        [1 if entries[index].label == "milady" else 0 for index in indices],
-                        threshold,
-                    )
+                metrics=compute_metrics(
+                    [probabilities[index] for index in indices],
+                    [1 if entries[index].label == "milady" else 0 for index in indices],
+                    threshold,
                 ),
             )
         diagnostics[group_name] = grouped_metrics
@@ -751,20 +736,6 @@ def count_by(entries: list, attribute: str) -> dict[str, int]:
         value: sum(1 for entry in entries if str(getattr(entry, attribute)) == value)
         for value in values
     }
-
-
-def metric_summary_from_dict(metrics: dict[str, float]) -> MetricSummary:
-    return MetricSummary(
-        accuracy=metrics["accuracy"],
-        precision=metrics["precision"],
-        recall=metrics["recall"],
-        f1=metrics["f1"],
-        true_positive=metrics["truePositive"],
-        false_positive=metrics["falsePositive"],
-        true_negative=metrics["trueNegative"],
-        false_negative=metrics["falseNegative"],
-    )
-
 
 if __name__ == "__main__":
     main()
