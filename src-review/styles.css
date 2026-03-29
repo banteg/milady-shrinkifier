@@ -218,6 +218,10 @@ a {
   background: white;
 }
 
+.thumb-image-frame {
+  position: relative;
+}
+
 .thumb-button[data-selected="true"] {
   border-color: #0f62fe;
   box-shadow: 0 0 0 1px #0f62fe;
@@ -228,6 +232,19 @@ a {
   aspect-ratio: 1;
   object-fit: cover;
   display: block;
+}
+
+.thumb-score-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  padding: 2px 5px;
+  border-radius: 999px;
+  background: rgba(20, 20, 20, 0.84);
+  color: white;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.1;
 }
 
 .thumb-button span {

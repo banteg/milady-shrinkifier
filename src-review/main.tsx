@@ -198,6 +198,13 @@ function formatScore(value: number | null): string {
   return value.toFixed(3);
 }
 
+function scoreBadgeText(item: ReviewItem): string | null {
+  if (item.maxModelScore == null || Number.isNaN(item.maxModelScore)) {
+    return null;
+  }
+  return `p ${formatScore(item.maxModelScore)}`;
+}
+
 function shortLabel(label: ReviewLabel): string {
   if (label === "milady") return "M";
   if (label === "unclear") return "U";
@@ -895,7 +902,12 @@ function App() {
                                       data-selected={String(selectedSha() === item.sha256)}
                                       onClick={() => selectGridItem(item.sha256)}
                                     >
-                                      <img src={imageUrl(item.sha256)} alt={item.sha256} />
+                                      <div class="thumb-image-frame">
+                                        <img src={imageUrl(item.sha256)} alt={item.sha256} />
+                                        <Show when={scoreBadgeText(item)}>
+                                          {(scoreText) => <span class="thumb-score-badge">{scoreText()}</span>}
+                                        </Show>
+                                      </div>
                                       <span>{item.label ? labelDisplay[item.label] : "unlabeled"}</span>
                                     </button>
                                   )}
