@@ -25,14 +25,13 @@ Everything runs locally. No server calls, no telemetry, nothing leaves your brow
 
 ## Install
 
-There is no Chrome Web Store release. Install from [GitHub Releases](https://github.com/banteg/milady-shrinkifier/releases) instead:
+There is no Chrome Web Store release. Install from GitHub instead:
 
-1. Download the latest `milady-shrinkifier-vX.Y.Z-unpacked.zip` from the [Releases page](https://github.com/banteg/milady-shrinkifier/releases).
+1. Download the latest `milady-shrinkifier-*-unpacked.zip` from the [Releases page](https://github.com/banteg/milady-shrinkifier/releases).
 2. Unzip it somewhere permanent on disk.
-3. Open [`chrome://extensions`](chrome://extensions).
+3. Open `chrome://extensions`.
 4. Enable `Developer mode`.
-5. Click `Load unpacked`.
-6. Select the unzipped folder.
+5. Click `Load unpacked` and select the unzipped folder, or drag and drop it onto the page.
 
 ## Accuracy
 
