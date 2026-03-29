@@ -23,6 +23,7 @@ from .pipeline_common import (
     connect_db,
     labeled_grid_items,
     load_review_items,
+    load_review_run_ids,
     queue_items,
     resolve_repo_path,
 )
@@ -56,6 +57,8 @@ BatchLabelPayload.model_rebuild()
 @dataclass(slots=True)
 class ReviewSnapshot:
     catalog_path: str
+    selected_run_id: str | None
+    available_run_ids: list[str]
     items: list[ReviewItem]
     items_by_sha: dict[str, ReviewItem]
     queue_lists: dict[str, list[ReviewItem]]
@@ -70,19 +73,33 @@ class ReviewSnapshot:
 class ReviewState:
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._snapshot = self._build_snapshot()
+        self._snapshots: dict[str | None, ReviewSnapshot] = {}
 
-    def get(self) -> ReviewSnapshot:
-        return self._snapshot
+    def get(self, run_id: str | None = None) -> ReviewSnapshot:
+        snapshot = self._snapshots.get(run_id)
+        if snapshot is not None:
+            return snapshot
+        with self._lock:
+            snapshot = self._snapshots.get(run_id)
+            if snapshot is None:
+                snapshot = self._build_snapshot(run_id)
+                self._snapshots[run_id] = snapshot
+            return snapshot
 
     def refresh(self) -> ReviewSnapshot:
         with self._lock:
-            self._snapshot = self._build_snapshot()
-            return self._snapshot
+            self._snapshots.clear()
+            snapshot = self._build_snapshot(None)
+            self._snapshots[None] = snapshot
+            return snapshot
 
-    def _build_snapshot(self) -> ReviewSnapshot:
+    def _build_snapshot(self, requested_run_id: str | None) -> ReviewSnapshot:
         with closing(connect_db()) as connection:
-            items = load_review_items(connection)
+            available_run_ids = load_review_run_ids(connection)
+            if requested_run_id is not None and requested_run_id not in available_run_ids:
+                raise KeyError(requested_run_id)
+            selected_run_id = requested_run_id or (available_run_ids[0] if available_run_ids else None)
+            items = load_review_items(connection, selected_run_id)
             items_by_sha = {item.sha256: item for item in items}
             queue_lists = {queue_name: queue_items(items, queue_name) for queue_name in REVIEW_QUEUES}
             labeled_lists = {filter_name: labeled_grid_items(items, filter_name) for filter_name in LABELED_GRID_FILTERS}
@@ -98,6 +115,8 @@ class ReviewState:
 
         return ReviewSnapshot(
             catalog_path=str(CATALOG_PATH),
+            selected_run_id=selected_run_id,
+            available_run_ids=available_run_ids,
             items=items,
             items_by_sha=items_by_sha,
             queue_lists=queue_lists,
@@ -121,8 +140,11 @@ app = FastAPI(title="Milady Shrinkifier Review")
 app.mount("/assets", StaticFiles(directory=str(REVIEW_ASSET_ROOT), check_dir=False), name="review-assets")
 
 
-def require_snapshot() -> ReviewSnapshot:
-    return STATE.get()
+def require_snapshot(run_id: str | None = None) -> ReviewSnapshot:
+    try:
+        return STATE.get(run_id)
+    except KeyError as error:
+        raise HTTPException(status_code=400, detail=f"Unknown review run id: {error.args[0]}") from error
 
 
 def require_queue_name(queue_name: str) -> str:
@@ -161,12 +183,14 @@ def root():
 
 
 @app.get("/api/summary")
-def summary() -> JSONResponse:
-    snapshot = require_snapshot()
+def summary(run_id: str | None = Query(None)) -> JSONResponse:
+    snapshot = require_snapshot(run_id)
     counts = {queue_name: len(snapshot.queue_lists[queue_name]) for queue_name in REVIEW_QUEUES}
     return JSONResponse(
         {
             "catalogPath": snapshot.catalog_path,
+            "selectedRunId": snapshot.selected_run_id,
+            "availableRunIds": snapshot.available_run_ids,
             "totalImages": len(snapshot.items),
             "queueCounts": counts,
             "labelCounts": snapshot.label_counts,
@@ -180,8 +204,9 @@ def summary() -> JSONResponse:
 def get_queue(
     queue: str = Query("unlabeled"),
     index: int = Query(0, ge=0),
+    run_id: str | None = Query(None),
 ) -> JSONResponse:
-    snapshot = require_snapshot()
+    snapshot = require_snapshot(run_id)
     queue_name = require_queue_name(queue)
     return JSONResponse(index_payload(snapshot, queue_name, index))
 
@@ -190,8 +215,9 @@ def get_queue(
 def get_batch(
     queue: str = Query("unlabeled"),
     limit: int = Query(9, ge=1, le=25),
+    run_id: str | None = Query(None),
 ) -> JSONResponse:
-    snapshot = require_snapshot()
+    snapshot = require_snapshot(run_id)
     queue_name = require_queue_name(queue)
     items = snapshot.queue_lists[queue_name]
     return JSONResponse(
@@ -204,8 +230,8 @@ def get_batch(
 
 
 @app.get("/api/item/{sha256}")
-def get_item(sha256: str) -> JSONResponse:
-    snapshot = require_snapshot()
+def get_item(sha256: str, run_id: str | None = Query(None)) -> JSONResponse:
+    snapshot = require_snapshot(run_id)
     item = snapshot.items_by_sha.get(sha256)
     if item is None:
         raise HTTPException(status_code=404, detail="Review item not found")
@@ -213,8 +239,8 @@ def get_item(sha256: str) -> JSONResponse:
 
 
 @app.get("/api/history")
-def get_history(limit: int = Query(24, ge=1, le=100)) -> JSONResponse:
-    snapshot = require_snapshot()
+def get_history(limit: int = Query(24, ge=1, le=100), run_id: str | None = Query(None)) -> JSONResponse:
+    snapshot = require_snapshot(run_id)
     history = []
     for event in snapshot.recent_events[:limit]:
         item = snapshot.items_by_sha.get(str(event["image_sha256"]))
@@ -235,8 +261,9 @@ def get_history(limit: int = Query(24, ge=1, le=100)) -> JSONResponse:
 def get_labeled_grid(
     filter_name: str = Query("all"),
     limit: int | None = Query(None, ge=1),
+    run_id: str | None = Query(None),
 ) -> JSONResponse:
-    snapshot = require_snapshot()
+    snapshot = require_snapshot(run_id)
     selected_filter = require_labeled_filter(filter_name)
     items = snapshot.labeled_lists[selected_filter]
     sliced_items = items[:limit] if limit is not None else items
@@ -253,8 +280,9 @@ def get_labeled_grid(
 def get_queue_grid(
     queue: str = Query("unlabeled"),
     limit: int | None = Query(None, ge=1),
+    run_id: str | None = Query(None),
 ) -> JSONResponse:
-    snapshot = require_snapshot()
+    snapshot = require_snapshot(run_id)
     queue_name = require_queue_name(queue)
     items = snapshot.queue_lists[queue_name]
     sliced_items = items[:limit] if limit is not None else items

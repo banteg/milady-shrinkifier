@@ -35,6 +35,7 @@ PUBLIC_MODEL_PATH = PROJECT_ROOT / "public" / "models" / "milady-mobilenetv3-sma
 PUBLIC_METADATA_PATH = PROJECT_ROOT / "public" / "generated" / "milady-mobilenetv3-small.meta.json"
 REVIEW_QUEUES = (
     "unlabeled",
+    "human_vs_model",
     "whitelisted",
     "high_seen_count",
     "notification_group",
@@ -488,33 +489,50 @@ def write_npz_atomic(path: Path, **arrays: np.ndarray) -> None:
     temporary_path.replace(path)
 
 
-def load_review_items(connection: sqlite3.Connection) -> list[ReviewItem]:
-    image_rows = connection.execute(
-        """
-        SELECT images.*,
-               latest_scores.score AS latest_model_score,
-               latest_scores.predicted_label AS latest_model_predicted_label,
-               latest_scores.run_id AS latest_model_run_id
-        FROM images
-        LEFT JOIN (
-          SELECT score_records.image_sha256,
-                 score_records.score,
-                 score_records.predicted_label,
-                 score_records.run_id
-          FROM model_scores AS score_records
-          INNER JOIN (
-            SELECT image_sha256, MAX(created_at) AS latest_created_at
-            FROM model_scores
-            GROUP BY image_sha256
-          ) AS latest
-            ON latest.image_sha256 = score_records.image_sha256
-           AND latest.latest_created_at = score_records.created_at
-        ) AS latest_scores
-          ON latest_scores.image_sha256 = images.sha256
-        WHERE images.local_path IS NOT NULL
-        ORDER BY images.updated_at DESC
-        """
-    ).fetchall()
+def load_review_items(connection: sqlite3.Connection, run_id: str | None = None) -> list[ReviewItem]:
+    if run_id is None:
+        image_rows = connection.execute(
+            """
+            SELECT images.*,
+                   latest_scores.score AS latest_model_score,
+                   latest_scores.predicted_label AS latest_model_predicted_label,
+                   latest_scores.run_id AS latest_model_run_id
+            FROM images
+            LEFT JOIN (
+              SELECT score_records.image_sha256,
+                     score_records.score,
+                     score_records.predicted_label,
+                     score_records.run_id
+              FROM model_scores AS score_records
+              INNER JOIN (
+                SELECT image_sha256, MAX(created_at) AS latest_created_at
+                FROM model_scores
+                GROUP BY image_sha256
+              ) AS latest
+                ON latest.image_sha256 = score_records.image_sha256
+               AND latest.latest_created_at = score_records.created_at
+            ) AS latest_scores
+              ON latest_scores.image_sha256 = images.sha256
+            WHERE images.local_path IS NOT NULL
+            ORDER BY images.updated_at DESC
+            """
+        ).fetchall()
+    else:
+        image_rows = connection.execute(
+            """
+            SELECT images.*,
+                   score_records.score AS latest_model_score,
+                   score_records.predicted_label AS latest_model_predicted_label,
+                   score_records.run_id AS latest_model_run_id
+            FROM images
+            LEFT JOIN model_scores AS score_records
+              ON score_records.image_sha256 = images.sha256
+             AND score_records.run_id = ?
+            WHERE images.local_path IS NOT NULL
+            ORDER BY images.updated_at DESC
+            """,
+            (run_id,),
+        ).fetchall()
 
     avatar_rows = connection.execute(
         """
@@ -625,9 +643,20 @@ def queue_items(items: list[ReviewItem], queue_name: str) -> list[ReviewItem]:
         return sorted(
             filtered,
             key=lambda item: (
-                item.max_model_score if item.max_model_score is not None else -1.0,
                 item.seen_count,
                 item.last_seen_at or "",
+                item.max_model_score if item.max_model_score is not None else -1.0,
+            ),
+            reverse=True,
+        )
+
+    if queue_name == "human_vs_model":
+        return sorted(
+            (item for item in items if "human_vs_model" in item.disagreement_flags),
+            key=lambda item: (
+                item.max_model_score if item.max_model_score is not None else -1.0,
+                item.seen_count,
+                item.labeled_at or "",
             ),
             reverse=True,
         )
@@ -697,6 +726,18 @@ def load_model_thresholds(run_ids: set[str]) -> dict[str, float]:
         except (OSError, ValueError, TypeError):
             continue
     return thresholds
+
+
+def load_review_run_ids(connection: sqlite3.Connection) -> list[str]:
+    rows = connection.execute(
+        """
+        SELECT run_id, MAX(created_at) AS latest_created_at
+        FROM model_scores
+        GROUP BY run_id
+        ORDER BY latest_created_at DESC, run_id DESC
+        """
+    ).fetchall()
+    return [str(row["run_id"]) for row in rows]
 
 
 def labeled_grid_items(items: list[ReviewItem], filter_name: str) -> list[ReviewItem]:

@@ -8,6 +8,7 @@ import { render } from "solid-js/web";
 type ReviewLabel = "milady" | "not_milady" | "unclear";
 type QueueName =
   | "unlabeled"
+  | "human_vs_model"
   | "whitelisted"
   | "high_seen_count"
   | "notification_group"
@@ -45,6 +46,8 @@ interface ReviewItem {
 
 interface SummaryPayload {
   catalogPath: string;
+  selectedRunId: string | null;
+  availableRunIds: string[];
   totalImages: number;
   queueCounts: Record<QueueName, number>;
   labelCounts: Record<ReviewLabel, number>;
@@ -106,6 +109,7 @@ type VirtualGridRow =
 
 const queueLabels: Record<QueueName, string> = {
   unlabeled: "Unlabeled",
+  human_vs_model: "Human vs model",
   whitelisted: "Whitelisted",
   high_seen_count: "High seen count",
   notification_group: "Notification group",
@@ -150,8 +154,19 @@ const gridGroupLabels: Record<GroupLabel, string> = {
 const preferredQueueOrder: QueueName[] = [
   "uncertain_unlabeled",
   "high_score_false_positive",
+  "human_vs_model",
   "high_score_unlabeled",
   "unlabeled",
+];
+const queueGroups: Array<{ label: string; queues: QueueName[] }> = [
+  {
+    label: "Labeling",
+    queues: ["uncertain_unlabeled", "high_score_false_positive", "high_score_unlabeled", "unlabeled"],
+  },
+  {
+    label: "Audit",
+    queues: ["human_vs_model", "whitelisted", "notification_group", "high_seen_count"],
+  },
 ];
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -183,6 +198,14 @@ function imageUrl(sha256: string): string {
   return `/api/image/${encodeURIComponent(sha256)}`;
 }
 
+function withRunId(path: string, runId: string | null): string {
+  if (!runId) {
+    return path;
+  }
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}run_id=${encodeURIComponent(runId)}`;
+}
+
 function formatScore(value: number | null): string {
   if (value == null || Number.isNaN(value)) {
     return "n/a";
@@ -206,6 +229,9 @@ function shortLabel(label: ReviewLabel): string {
 function initialBatchLabel(item: ReviewItem): ReviewLabel {
   if (item.label) {
     return item.label;
+  }
+  if (item.latestModelPredictedLabel) {
+    return item.latestModelPredictedLabel;
   }
   return "not_milady";
 }
@@ -282,18 +308,22 @@ function App() {
   const [selectedBatchIndex, setSelectedBatchIndex] = createSignal(0);
   const [batchAssignments, setBatchAssignments] = createSignal<BatchAssignment[]>([]);
   const [gridWidth, setGridWidth] = createSignal(0);
+  const [selectedRunId, setSelectedRunId] = createSignal<string | null>(null);
   let gridScrollRef: HTMLDivElement | undefined;
   let gridResizeObserver: ResizeObserver | undefined;
 
   const summaryQuery = createQuery(() => ({
-    queryKey: ["review", "summary"],
-    queryFn: () => fetchJson<SummaryPayload>("/api/summary"),
+    queryKey: ["review", "summary", selectedRunId()],
+    queryFn: () => fetchJson<SummaryPayload>(withRunId("/api/summary", selectedRunId())),
   }));
 
   createEffect(() => {
     const summary = summaryQuery.data;
     if (!summary) {
       return;
+    }
+    if (selectedRunId() !== summary.selectedRunId) {
+      setSelectedRunId(summary.selectedRunId);
     }
 
     const preferredQueue = preferredQueueOrder.find((candidate) => (summary.queueCounts[candidate] ?? 0) > 0) ?? "unlabeled";
@@ -318,15 +348,15 @@ function App() {
   });
 
   const selectedItemQuery = createQuery(() => ({
-    queryKey: ["review", "item", selectedSha()],
+    queryKey: ["review", "item", selectedRunId(), selectedSha()],
     enabled: selectedSha() !== null,
-    queryFn: () => fetchJson<ItemPayload>(`/api/item/${encodeURIComponent(selectedSha() ?? "")}`),
+    queryFn: () => fetchJson<ItemPayload>(withRunId(`/api/item/${encodeURIComponent(selectedSha() ?? "")}`, selectedRunId())),
   }));
 
   const queueQuery = createQuery(() => ({
-    queryKey: ["review", "queue", queue(), index()],
+    queryKey: ["review", "queue", selectedRunId(), queue(), index()],
     enabled: selectedSha() === null,
-    queryFn: () => fetchJson<QueuePayload>(`/api/queue?queue=${encodeURIComponent(queue())}&index=${index()}`),
+    queryFn: () => fetchJson<QueuePayload>(withRunId(`/api/queue?queue=${encodeURIComponent(queue())}&index=${index()}`, selectedRunId())),
   }));
 
   createEffect(() => {
@@ -358,14 +388,14 @@ function App() {
   });
 
   const historyQuery = createQuery(() => ({
-    queryKey: ["review", "history"],
-    queryFn: () => fetchJson<HistoryPayload>("/api/history"),
+    queryKey: ["review", "history", selectedRunId()],
+    queryFn: () => fetchJson<HistoryPayload>(withRunId("/api/history", selectedRunId())),
   }));
 
   const batchQuery = createQuery(() => ({
-    queryKey: ["review", "batch", queue()],
+    queryKey: ["review", "batch", selectedRunId(), queue()],
     enabled: activeView() === "batch",
-    queryFn: () => fetchJson<BatchPayload>(`/api/batch?queue=${encodeURIComponent(queue())}&limit=9`),
+    queryFn: () => fetchJson<BatchPayload>(withRunId(`/api/batch?queue=${encodeURIComponent(queue())}&limit=9`, selectedRunId())),
   }));
 
   createEffect(() => {
@@ -392,11 +422,11 @@ function App() {
   });
 
   const gridQuery = createQuery(() => ({
-    queryKey: ["review", "grid", gridSource(), effectiveGridFilter()],
+    queryKey: ["review", "grid", selectedRunId(), gridSource(), effectiveGridFilter()],
     queryFn: () =>
       gridSource() === "queue"
-        ? fetchJson<GridPayload>(`/api/queue-grid?queue=${encodeURIComponent(effectiveGridFilter())}`)
-        : fetchJson<GridPayload>(`/api/labeled-grid?filter_name=${encodeURIComponent(effectiveGridFilter())}`),
+        ? fetchJson<GridPayload>(withRunId(`/api/queue-grid?queue=${encodeURIComponent(effectiveGridFilter())}`, selectedRunId()))
+        : fetchJson<GridPayload>(withRunId(`/api/labeled-grid?filter_name=${encodeURIComponent(effectiveGridFilter())}`, selectedRunId())),
   }));
 
   const groupedGridItems = createMemo(() => {
@@ -632,6 +662,25 @@ function App() {
         <aside class="panel sidebar-panel">
           <h2>Queues</h2>
           <label>
+            <span>Run</span>
+            <select
+              value={selectedRunId() ?? ""}
+              onInput={(event) => {
+                setSelectedRunId(event.currentTarget.value || null);
+                setSelectedSha(null);
+                setIndex(0);
+              }}
+            >
+              <Show when={summaryQuery.data} fallback={<option>Loading…</option>}>
+                {(summary) => (
+                  <For each={summary().availableRunIds}>
+                    {(runId) => <option value={runId}>{runId}</option>}
+                  </For>
+                )}
+              </Show>
+            </select>
+          </label>
+          <label>
             <span>Queue</span>
             <select
               value={queue()}
@@ -646,8 +695,16 @@ function App() {
             >
               <Show when={summaryQuery.data} fallback={<option>Loading…</option>}>
                 {(summary) => (
-                  <For each={Object.entries(summary().queueCounts) as Array<[QueueName, number]>}>
-                    {([queueName, count]) => <option value={queueName}>{`${queueLabels[queueName]} (${count})`}</option>}
+                  <For each={queueGroups}>
+                    {(group) => (
+                      <optgroup label={group.label}>
+                        <For each={group.queues}>
+                          {(queueName) => (
+                            <option value={queueName}>{`${queueLabels[queueName]} (${summary().queueCounts[queueName] ?? 0})`}</option>
+                          )}
+                        </For>
+                      </optgroup>
+                    )}
                   </For>
                 )}
               </Show>
@@ -655,7 +712,7 @@ function App() {
           </label>
           <p class="summary-copy">
             <Show when={summaryQuery.data} fallback="Loading summary…">
-              {(summary) => `${summary().totalImages} images, ${summary().unlabeled} unlabeled`}
+              {(summary) => `${summary().totalImages} images, ${summary().unlabeled} unlabeled, run ${summary().selectedRunId ?? "unscored"}`}
             </Show>
           </p>
           <div class="actions">
@@ -841,8 +898,16 @@ function App() {
                   }>
                     <Show when={summaryQuery.data}>
                       {(summary) => (
-                        <For each={Object.entries(summary().queueCounts) as Array<[QueueName, number]>}>
-                          {([queueName, count]) => <option value={queueName}>{`${queueLabels[queueName]} (${count})`}</option>}
+                        <For each={queueGroups}>
+                          {(group) => (
+                            <optgroup label={group.label}>
+                              <For each={group.queues}>
+                                {(queueName) => (
+                                  <option value={queueName}>{`${queueLabels[queueName]} (${summary().queueCounts[queueName] ?? 0})`}</option>
+                                )}
+                              </For>
+                            </optgroup>
+                          )}
                         </For>
                       )}
                     </Show>
