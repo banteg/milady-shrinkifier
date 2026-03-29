@@ -11,6 +11,7 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "download-avatars": ("milady.download_avatar_catalog", "Download avatar images from the local catalog."),
     "download-collections": ("milady.download_collection_samples", "Download configured NFT collection samples."),
     "label-heuristic": ("milady.label_heuristic_matches", "Auto-label heuristic positives as milady."),
+    "label-silver": ("milady.label_silver_labels", "Auto-label extreme-confidence scored avatars as weak silver labels."),
     "build-dataset": ("milady.build_training_dataset", "Materialize train/val/test splits."),
     "train": ("milady.train_classifier", "Train the MobileNetV3-Small classifier."),
     "compare": ("milady.compare_runs", "Compare trained checkpoints on the current dataset splits."),

@@ -42,7 +42,7 @@ The extension exports collected avatars as JSON manifests. The offline pipeline 
 Split policy:
 - blind `val` / `test` only use manual export labels (`label_source=manual`)
 - NFT collection samples and heuristic-assisted labels are train-only
-- heuristic-assisted labels stay in the training pool with a reduced sample weight
+- heuristic-assisted and silver labels stay in the training pool with a reduced sample weight
 
 Typical loop:
 
@@ -52,6 +52,8 @@ uv run milady download-avatars
 uv run milady download-avatars --retry-failed
 uv run milady download-collections
 uv run milady label-heuristic
+uv run milady score --run-id <current-best-run-id>
+uv run milady label-silver --run-id <current-best-run-id>
 pnpm run build:review
 uv run milady review
 uv run milady build-dataset
@@ -62,3 +64,5 @@ pnpm run build
 ```
 
 `uv run milady ingest` scans `cache/ingest/*.json` by default and archives those manifests into `cache/exports/raw/` as it ingests them. You can still pass explicit JSON paths when needed.
+
+`uv run milady label-silver` is conservative by default: it only auto-labels unlabeled images with extremely low model scores as weak `not_milady` examples. Those silver labels are train-only and are never used for blind validation or test.
