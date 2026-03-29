@@ -288,15 +288,18 @@ a {
 }
 
 .batch-tile[data-label="milady"] {
-  background: #fff2e8;
+  border-color: #d8a07e;
+  background: #ffe3d1;
 }
 
 .batch-tile[data-label="not_milady"] {
-  background: #effaf1;
+  border-color: #8bbc98;
+  background: #dff3e4;
 }
 
 .batch-tile[data-label="unclear"] {
-  background: #fff8cc;
+  border-color: #d1bb63;
+  background: #fff0ad;
 }
 
 .batch-tile img {
@@ -348,6 +351,7 @@ a {
   gap: 8px;
   padding: 6px 8px;
   font-size: 11px;
+  background: rgba(255, 255, 255, 0.55);
 }
 
 .batch-caption-left {
