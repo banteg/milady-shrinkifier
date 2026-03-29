@@ -65,6 +65,7 @@ interface QueuePayload {
 interface BatchPayload {
   queue: QueueName;
   total: number;
+  offset: number;
   items: ReviewItem[];
 }
 
@@ -307,6 +308,7 @@ function App() {
   const [gridFilter, setGridFilter] = createSignal<string>("unlabeled");
   const [selectedBatchIndex, setSelectedBatchIndex] = createSignal(0);
   const [batchAssignments, setBatchAssignments] = createSignal<BatchAssignment[]>([]);
+  const [batchOffset, setBatchOffset] = createSignal(0);
   const [gridWidth, setGridWidth] = createSignal(0);
   const [selectedRunId, setSelectedRunId] = createSignal<string | null>(null);
   let gridScrollRef: HTMLDivElement | undefined;
@@ -393,15 +395,21 @@ function App() {
   }));
 
   const batchQuery = createQuery(() => ({
-    queryKey: ["review", "batch", selectedRunId(), queue()],
+    queryKey: ["review", "batch", selectedRunId(), queue(), batchOffset()],
     enabled: activeView() === "batch",
-    queryFn: () => fetchJson<BatchPayload>(withRunId(`/api/batch?queue=${encodeURIComponent(queue())}&limit=9`, selectedRunId())),
+    queryFn: () =>
+      fetchJson<BatchPayload>(
+        withRunId(`/api/batch?queue=${encodeURIComponent(queue())}&limit=9&offset=${batchOffset()}`, selectedRunId()),
+      ),
   }));
 
   createEffect(() => {
     const payload = batchQuery.data;
     if (!payload) {
       return;
+    }
+    if (payload.offset !== batchOffset()) {
+      setBatchOffset(payload.offset);
     }
     setSelectedBatchIndex(0);
     setBatchAssignments(
@@ -557,11 +565,22 @@ function App() {
       items: items.map((entry) => ({ sha256: entry.item.sha256, label: entry.assignedLabel })),
     });
     if (payload.count === 0) {
+      setBatchOffset((value) => value + items.length);
       await batchQuery.refetch();
       return;
     }
     setSelectedSha(null);
     await invalidateAll();
+  }
+
+  function moveBatchSelection(delta: number) {
+    setSelectedBatchIndex((value) => {
+      const total = batchAssignments().length;
+      if (total === 0) {
+        return 0;
+      }
+      return Math.max(0, Math.min(total - 1, value + delta));
+    });
   }
 
   async function handleUndo() {
@@ -642,6 +661,27 @@ function App() {
         event.preventDefault();
         setSelectedBatchIndex(numpadIndex);
         cycleBatchLabel(numpadIndex);
+        return;
+      }
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        moveBatchSelection(-1);
+        return;
+      }
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        moveBatchSelection(1);
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        moveBatchSelection(-3);
+        return;
+      }
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        moveBatchSelection(3);
+        return;
       }
       if (event.key === "Enter" || event.code === "NumpadEnter") {
         event.preventDefault();
@@ -669,6 +709,7 @@ function App() {
                 setSelectedRunId(event.currentTarget.value || null);
                 setSelectedSha(null);
                 setIndex(0);
+                setBatchOffset(0);
               }}
             >
               <Show when={summaryQuery.data} fallback={<option>Loading…</option>}>
@@ -688,6 +729,7 @@ function App() {
                 setQueue(event.currentTarget.value as QueueName);
                 setSelectedSha(null);
                 setIndex(0);
+                setBatchOffset(0);
                 if (gridSource() === "queue") {
                   setGridFilter(event.currentTarget.value);
                 }
@@ -834,12 +876,18 @@ function App() {
                   <button type="button" onClick={() => void batchQuery.refetch()}>
                     Load batch
                   </button>
+                  <button type="button" disabled={batchOffset() === 0} onClick={() => setBatchOffset((value) => Math.max(0, value - 9))}>
+                    Prev batch
+                  </button>
+                  <button type="button" disabled={batchAssignments().length === 0} onClick={() => setBatchOffset((value) => value + 9)}>
+                    Next batch
+                  </button>
                   <button type="button" disabled={batchAssignments().length === 0 || batchMutation.isPending} onClick={() => void handleCommitBatch()}>
                     Enter: commit batch
                   </button>
                 </div>
               </div>
-              <div class="hint">Numpad 7/8/9 4/5/6 1/2/3 cycles each tile. Click also cycles. Enter commits.</div>
+              <div class="hint">Numpad cycles labels, arrow keys move selection, Enter commits or advances.</div>
               <div class="batch-panel">
                 <Show when={batchAssignments().length > 0} fallback={<p class="empty-copy">No items in this queue.</p>}>
                   <div class="batch-grid">

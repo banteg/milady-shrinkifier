@@ -215,16 +215,20 @@ def get_queue(
 def get_batch(
     queue: str = Query("unlabeled"),
     limit: int = Query(9, ge=1, le=25),
+    offset: int = Query(0, ge=0),
     run_id: str | None = Query(None),
 ) -> JSONResponse:
     snapshot = require_snapshot(run_id)
     queue_name = require_queue_name(queue)
     items = snapshot.queue_lists[queue_name]
+    bounded_offset = min(offset, max(0, len(items) - 1)) if items else 0
+    sliced_items = items[bounded_offset : bounded_offset + limit]
     return JSONResponse(
         {
             "queue": queue_name,
             "total": len(items),
-            "items": [item.to_dict() for item in items[:limit]],
+            "offset": bounded_offset,
+            "items": [item.to_dict() for item in sliced_items],
         }
     )
 
