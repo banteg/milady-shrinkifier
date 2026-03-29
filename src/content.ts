@@ -195,10 +195,9 @@ function scheduleDelayedProcessVisibleTweets(): void {
   }, 350);
 }
 
-function reapplyModeToVisibleTweets(): void {
-  for (const tweet of Array.from(visibleTweets)) {
-    if (!tweet.isConnected) {
-      visibleTweets.delete(tweet);
+function reapplyModeToObservedTweets(): void {
+  for (const tweet of Array.from(document.querySelectorAll<HTMLElement>(ARTICLE_SELECTOR))) {
+    if (!tweet.dataset.miladyShrinkifierState) {
       continue;
     }
     applyMode(tweet, processed.get(tweet));
@@ -624,7 +623,7 @@ function observeStorage(): void {
         ),
       };
       if (changes.mode && settings.mode !== previousMode) {
-        reapplyModeToVisibleTweets();
+        reapplyModeToObservedTweets();
       }
       scheduleProcessVisibleTweets();
     }
