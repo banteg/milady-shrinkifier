@@ -52,4 +52,6 @@ All rows were re-evaluated on the same blind set on March 28, 2026, so they are 
 
 ## Development
 
-See [DEVELOPMENT.md](DEVELOPMENT.md) for build commands, debugging, and the training pipeline.
+See [DEVELOPMENT.md](DEVELOPMENT.md) for build commands and debugging.
+
+For a user-facing walkthrough of how the offline training loop works end to end, see [docs/training-pipeline.md](docs/training-pipeline.md).

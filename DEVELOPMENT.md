@@ -39,6 +39,8 @@ pnpm run debug:chrome:attach:keep-open
 
 The extension exports collected avatars as JSON manifests. The offline pipeline ingests those exports into a local SQLite catalog under `cache/`, downloads avatar images, supports manual labeling, then trains and exports a MobileNetV3-Small classifier back into the extension runtime. The review app supports both individual labeling and 9-up batch labeling.
 
+For a fuller narrative walkthrough of the pipeline and the trust tiers used during review and training, see [docs/training-pipeline.md](docs/training-pipeline.md).
+
 Split policy:
 - blind `val` / `test` prioritize manual export labels and held-out collection positives
 - routine training uses real exported avatars, scored hard cases, and a reduced-weight collection corpus
