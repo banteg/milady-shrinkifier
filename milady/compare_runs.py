@@ -32,25 +32,42 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    run_ids = dedupe(args.run_ids)
+    run_compare(
+        run_ids=args.run_ids,
+        eval_set=args.eval_set,
+        batch_size=args.batch_size,
+        force_cpu=args.cpu,
+        output_dir=args.output_dir,
+    )
+
+
+def run_compare(
+    *,
+    run_ids: list[str],
+    eval_set: str = "blind",
+    batch_size: int = 64,
+    force_cpu: bool = False,
+    output_dir: Path | None = None,
+) -> tuple[dict[str, object], Path]:
+    run_ids = dedupe(run_ids)
     if len(run_ids) < 2:
         raise SystemExit("Pass at least two --run-id values.")
 
     ensure_layout()
-    output_dir = args.output_dir or default_output_dir(run_ids)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    resolved_output_dir = output_dir or default_output_dir(run_ids)
+    resolved_output_dir.mkdir(parents=True, exist_ok=True)
 
-    device = choose_device(args.cpu)
+    device = choose_device(force_cpu)
     cache_connection = connect_offline_cache_db()
     try:
-        val_entries, test_entries, evaluation_policy = load_evaluation_entries(args.eval_set)
+        val_entries, test_entries, evaluation_policy = load_evaluation_entries(eval_set)
         if not val_entries or not test_entries:
             raise SystemExit("Missing evaluation entries. Run `uv run milady build-dataset` first.")
         print(
             f"[compare] device={device.type} runs={len(run_ids)} val={len(val_entries)} test={len(test_entries)}",
             flush=True,
         )
-        print(f"[compare] output_dir={output_dir}", flush=True)
+        print(f"[compare] output_dir={resolved_output_dir}", flush=True)
 
         results: dict[str, object] = {
             "generatedAt": datetime.now(UTC).isoformat(),
@@ -79,7 +96,7 @@ def main() -> None:
             model.load_state_dict(state)
 
             print(f"[compare:{run_id}] evaluating validation split", flush=True)
-            val_probabilities, val_labels = evaluate(model, val_entries, device, args.batch_size, cache_connection)
+            val_probabilities, val_labels = evaluate(model, val_entries, device, batch_size, cache_connection)
             threshold, val_metrics = choose_threshold(val_probabilities, val_labels, precision_floor)
             print(
                 f"[compare:{run_id}] validation done threshold={threshold:.4f} "
@@ -87,14 +104,14 @@ def main() -> None:
                 flush=True,
             )
             print(f"[compare:{run_id}] evaluating test split", flush=True)
-            test_probabilities, test_labels = evaluate(model, test_entries, device, args.batch_size, cache_connection)
+            test_probabilities, test_labels = evaluate(model, test_entries, device, batch_size, cache_connection)
             test_metrics = compute_metrics(test_probabilities, test_labels, threshold)
 
             false_positives = collect_errors(test_entries, test_probabilities, test_labels, threshold, want_predicted=1, want_label=0)
             false_negatives = collect_errors(test_entries, test_probabilities, test_labels, threshold, want_predicted=0, want_label=1)
 
-            false_positives_path = output_dir / f"{run_id}.false_positives.json"
-            false_negatives_path = output_dir / f"{run_id}.false_negatives.json"
+            false_positives_path = resolved_output_dir / f"{run_id}.false_positives.json"
+            false_negatives_path = resolved_output_dir / f"{run_id}.false_negatives.json"
             false_positives_path.write_text(json.dumps(false_positives, indent=2, sort_keys=True))
             false_negatives_path.write_text(json.dumps(false_negatives, indent=2, sort_keys=True))
             print(
@@ -116,10 +133,11 @@ def main() -> None:
                 "falseNegativesPath": str(false_negatives_path),
             }
 
-        summary_output = output_dir / "summary.json"
+        summary_output = resolved_output_dir / "summary.json"
         summary_output.write_text(json.dumps(results, indent=2, sort_keys=True))
         print(json.dumps(results, indent=2, sort_keys=True))
         print(f"[saved] {summary_output}")
+        return results, summary_output
     finally:
         cache_connection.close()
 

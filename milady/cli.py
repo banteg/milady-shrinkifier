@@ -13,6 +13,7 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "build-dataset": ("milady.build_training_dataset", "Materialize train/val/test splits."),
     "train": ("milady.train_classifier", "Train the MobileNetV3-Small classifier."),
     "compare": ("milady.compare_runs", "Compare trained checkpoints on the current dataset splits."),
+    "compare-prod-history": ("milady.compare_prod_history", "Compare all promoted production models on a shared evaluation set."),
     "export-errors": ("milady.export_compare_errors", "Export compare false positives and negatives as image folders."),
     "score": ("milady.score_avatar_catalog", "Score the local catalog with a trained classifier."),
     "export-onnx": ("milady.export_classifier_onnx", "Export a trained classifier to ONNX for the extension runtime."),

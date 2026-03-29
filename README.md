@@ -34,22 +34,22 @@ There is no Chrome Web Store release. Install from [GitHub Releases](https://git
 
 ## Accuracy
 
-All scores come from the current blind set: manually labeled exported avatars plus a fixed held-out slice of collection positives.
+All scores below come from the current exported evaluation corpus: deduped exported avatars labeled `manual` or `model`.
 
 - **Precision** — when the extension filters a post, how often it's right.
-- **Recall** — of the Milady-style avatars in the test set, how many it catches.
-- **Validation** set — used during training to choose thresholds and checkpoints; `778` images (`95` milady, `683` not_milady).
-- **Test** set — held back for the final blind score; `445` images (`78` milady, `367` not_milady).
+- **Recall** — of the Milady-style avatars in the evaluation set, how many it catches.
+- **Evaluation corpus** — `8,496` exported avatars (`390` milady, `8,106` not_milady).
+- This is a broader product-facing snapshot than the blind split, but it is not a blind benchmark.
 
 | Version | Run | Training mix | Precision | Recall |
 | --- | --- | --- | --- | --- |
-| `v0.2.2` | `20260327T142224Z` | Milady Maker + `2,596` manually tagged avatars | `0.9706` | `0.8462` |
-| `v0.3.0` | `20260327T212453Z` | + Remilio, Pixelady + `2,967` manually tagged avatars | `1.0000` | `0.9359` |
-| `v0.4.0` | `20260328T144735Z` | + `5,715` manually tagged avatars | `1.0000` | `0.9744` |
-| `v0.5.0` | `20260328T223931Z` | + `6,773` manually tagged avatars | `1.0000` | `0.9744` |
-| `v0.6.0` | `20260329T124912Z` | + `7,370` human-reviewed avatars | `1.0000` | `0.9231` |
+| `v0.2.2` | `20260327T142224Z` | Milady Maker + `2,596` manually tagged avatars | `0.9957` | `0.5872` |
+| `v0.3.0` | `20260327T212453Z` | + Remilio, Pixelady + `2,967` manually tagged avatars | `0.9964` | `0.7051` |
+| `v0.4.0` | `20260328T144735Z` | + `5,715` manually tagged avatars | `0.9965` | `0.7205` |
+| `v0.5.0` | `20260328T223931Z` | + `6,773` manually tagged avatars | `1.0000` | `0.9077` |
+| `v0.6.0` | `20260329T124912Z` | + `7,370` human-reviewed avatars | `0.9971` | `0.8769` |
 
-All rows were re-evaluated on the same blind set on March 29, 2026, so they are directly comparable.
+All rows were re-evaluated on the same exported evaluation corpus on March 29, 2026, so they are directly comparable.
 
 ## Development
 
