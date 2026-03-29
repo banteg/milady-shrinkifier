@@ -1,62 +1,55 @@
 # Training Pipeline Walkthrough
 
-This page explains how Milady Shrinkifier improves its classifier over time, from raw browser exports to a new extension build.
+This page explains the training pipeline from extension export to promoted model.
 
-The short version is:
+## Overview
 
-1. the extension collects avatar sightings while you browse X,
-2. those sightings are exported and ingested into a local catalog,
-3. avatar images and NFT collection samples are downloaded,
-4. the current model scores the catalog,
-5. the review tool turns those scores into high-value labeling work,
-6. the dataset builder turns everything into train/validation/test splits,
-7. a new model is trained and compared against the current production model,
-8. if it wins, it is exported back into the extension.
+The pipeline is:
 
-Everything happens locally. The browser extension, the catalog, the review app, training, evaluation, and ONNX export all run on your machine.
+1. collect avatar sightings in the extension
+2. export them as JSON
+3. ingest those exports into the local catalog
+4. download avatar images and positive collection samples
+5. score the catalog with the current model
+6. review the highest-value cases
+7. build stable train/validation/test splits
+8. train a candidate model
+9. compare it against the current production model
+10. export it back into the extension if it wins
 
-## Why The Pipeline Exists
+## Data Sources
 
-The extension ships a compact image classifier that decides whether a profile picture looks Milady-like. That model needs two things to improve:
-
-- more examples of real avatars seen on X
-- better labels around the decision boundary
-
-The pipeline is designed to get both without introducing a remote service or a cloud training system. The extension gathers the raw material. The offline tools organize it, rank it, label it, train on it, and ship a new model back into the extension.
-
-## The Main Data Sources
-
-The model learns from three broad sources:
+The model trains on three main sources:
 
 1. **Exported avatars**
-   These are real avatars collected by the extension while you browse. They are the most important source because they match the production environment.
+   Real avatars collected from X. This is the highest-value data because it matches the production environment.
 
 2. **Collection corpora**
-   These are curated positive NFT collections stored under `cache/collections/`, such as:
+   Positive NFT collections stored under `cache/collections/`, currently:
    - `milady-maker`
    - `remilio`
    - `pixelady`
 
-   These help define the positive class, but they are cleaner than real exported avatars, so they are downweighted during training.
+   These are useful positives, but they are cleaner than real exported avatars, so they are downweighted during training.
 
-3. **Automatic weak labels**
-   These are conservative silver labels generated from extreme-confidence model predictions. Today they are mostly used for obvious negatives.
+3. **Silver labels**
+   Weak labels generated automatically from extreme-confidence model predictions. These are mainly used for obvious negatives.
 
-## Step 1: Collect And Export Avatars From The Extension
+## Step 1: Export From The Extension
 
-While the extension runs on X, it scans visible avatars locally and keeps track of:
+The extension collects avatar sightings while you browse X. An export contains:
 
 - avatar URL
-- account handles
+- handles
 - display names
 - source surfaces
-- how often the avatar was seen
-- example profile, tweet, and notification URLs
-- whether the account was whitelisted
+- seen count
+- example profile / tweet / notification URLs
+- whitelist state
 
-Nothing is uploaded anywhere. When you export from the popup, the extension writes a JSON manifest. Those manifests are usually dropped into `cache/ingest/`.
+Exports are usually dropped into `cache/ingest/`.
 
-## Step 2: Ingest Exports Into The Local Catalog
+## Step 2: Ingest Into The Catalog
 
 Run:
 
@@ -68,13 +61,13 @@ This command:
 
 - scans `cache/ingest/*.json`
 - archives those manifests into `cache/exports/raw/`
-- merges their contents into the local SQLite catalog at `cache/dataset/avatar_catalog.sqlite`
+- merges the exported rows into `cache/dataset/avatar_catalog.sqlite`
 
-Ingest deduplicates by normalized avatar URL. If the same avatar URL appears in multiple exports, the pipeline merges metadata instead of creating separate records. Handles, display names, source surfaces, and seen counts are combined into one catalog entry.
+Ingest deduplicates by normalized avatar URL. If the same avatar URL appears in multiple exports, the pipeline merges metadata into one catalog row instead of creating duplicates.
 
-At this stage the catalog knows about avatar sightings, but it may not have the image bytes yet.
+At this point the catalog has sighting metadata, but some rows may still be missing downloaded image bytes.
 
-## Step 3: Download Avatar Images And Collection Positives
+## Step 3: Download Images
 
 Run:
 
@@ -84,20 +77,18 @@ uv run milady download-avatars --retry-failed
 uv run milady download-collections
 ```
 
-These commands do two different jobs:
+These commands do two things:
 
-- `download-avatars` fetches the exported avatar images into `cache/avatars/files/`
+- `download-avatars` fetches exported avatar images into `cache/avatars/files/`
 - `download-collections` maintains the positive NFT corpora under `cache/collections/`
 
-Downloaded avatars are deduplicated by image SHA. If many different avatar URLs point to the same underlying image, the catalog will still end up with one stored image object.
+Downloaded avatars are deduplicated by image SHA. If many avatar URLs point to the same image, the catalog still ends up with one stored image object.
 
-Collection downloads are tracked in one manifest:
+Collection downloads are tracked in:
 
 - `cache/collections/manifest.json`
 
-That manifest tells the training pipeline which positive collection samples currently exist on disk.
-
-## Step 4: Score The Catalog With The Current Model
+## Step 4: Score The Catalog
 
 Run:
 
@@ -105,17 +96,17 @@ Run:
 uv run milady score
 ```
 
-If you do not pass `--run-id`, this uses the currently promoted production run automatically.
+If you omit `--run-id`, this uses the currently promoted production run.
 
-Scoring writes per-image model outputs into the catalog, including:
+Scoring writes per-image model outputs into the catalog:
 
-- the model run id
-- the score
-- the predicted label
-- the threshold associated with that run
+- model run id
+- score
+- predicted label
+- threshold for that run
 - distance from the threshold
 
-This does not create labels by itself. It creates ranking information that the review tool can use to focus human attention where it matters most.
+This step does not create labels by itself. It ranks the catalog so review effort can focus on the most useful cases.
 
 ## Step 5: Review High-Value Cases
 
@@ -126,59 +117,55 @@ pnpm run build:review
 uv run milady review
 ```
 
-The review app is the human-in-the-loop part of the system. It is no longer designed as a generic “label everything manually” interface. It is meant to help you spend time on the cases that most improve the model.
+The review app is the labeling and audit layer. It is meant to direct human attention to the cases that most improve the model.
 
 ### Run-Pinned Review
 
-The review UI starts with a `Run` selector. Pick the scored run you want to improve. All queue ranking, disagreement flags, and batch defaults are tied to that selected run.
+The UI starts with a `Run` selector. Pick the scored run you want to improve. Queue ranking, disagreement flags, and batch defaults are all tied to that selected run.
 
-### The Most Useful Queues
+### Main Queues
 
-The main review queues are:
+The most useful queues are:
 
 - **Uncertain unlabeled**
   Items closest to the current threshold. These are the best gold-label candidates because they shape the decision boundary.
 
 - **High-score false positives**
-  Items already labeled `not_milady` that the model still scores highly. These are excellent failure-harvesting examples.
+  Items already labeled `not_milady` that the model still scores highly. These are strong failure examples.
 
 - **Human vs model**
-  Items where the current human label disagrees with the selected model run.
+  Items where the human label disagrees with the selected run.
 
 - **High-score unlabeled**
   Strong model-positive candidates that have not been reviewed yet.
 
 - **Unlabeled**
-  The general backlog. This is lower-yield than the score-driven queues once the model is reasonably good.
+  The general backlog. This is lower-yield than the score-driven queues.
 
-### Label Trust Levels
+### Review Trust Levels
 
-The review pipeline now distinguishes between different levels of trust:
+The review pipeline distinguishes between three kinds of exported labels:
 
 - **`manual`**
   Written by individual review. These are treated as gold labels.
 
 - **`model_reviewed`**
-  Written by batch review. These are human-confirmed model suggestions and are treated as trusted labels rather than gold.
+  Written by batch review. These are human-confirmed model suggestions and are treated as trusted labels.
 
 - **`silver`**
-  Fully automatic weak labels created by the silver-label tool.
+  Fully automatic weak labels.
 
-This split matters because not every human interaction should count as the same quality of training signal. Fast batch confirmation is valuable, but it is not the same as careful manual adjudication of a difficult case.
+Fast batch confirmation is useful, but it should not count as the same quality of signal as careful manual adjudication.
 
 ### Batch Review
 
-Batch mode shows nine items at a time. It is model-proposal-first:
+Batch mode shows nine items at a time and defaults each tile to the model’s predicted label when available. The normal action is confirm or slightly correct, not label from scratch.
 
-- each tile defaults to the model’s predicted label when available
-- the human mainly confirms or corrects
-- committing the batch writes `model_reviewed` labels
-
-This is for throughput. It is useful when the model is already mostly right and you want humans spending less time on obvious cases.
+Committing a batch writes `model_reviewed` labels.
 
 ### Individual Review
 
-Individual review is for higher-value decisions:
+Individual review is for:
 
 - hard boundary cases
 - ambiguous items
@@ -189,19 +176,17 @@ Those labels are written as `manual`.
 
 ## Step 6: Optional Silver Labels
 
-The pipeline also supports conservative fully automatic labels:
+Run:
 
 ```bash
 uv run milady label-silver --run-id <run-id>
 ```
 
-Today this is mainly used for extremely low-score negatives. Those labels are:
+Today this is mainly used for extremely low-score negatives. Silver labels are:
 
 - train-only
 - weakly weighted
 - excluded from blind validation and test
-
-Silver labels are meant to reduce low-value human work, not replace review of important cases.
 
 ## Step 7: Build The Dataset
 
@@ -211,11 +196,9 @@ Run:
 uv run milady build-dataset
 ```
 
-This is where the pipeline turns raw files and labels into training data.
+This materializes the training dataset.
 
-### What The Builder Does
-
-It:
+The builder:
 
 - loads exported avatars and collection positives
 - computes or reuses cached fingerprints
@@ -226,11 +209,11 @@ It:
 The builder also maintains:
 
 - `cache/dataset/offline_cache.sqlite`
-  for image fingerprints and preprocessing caches
+  image fingerprints and preprocessing caches
 - `cache/dataset/split_manifest.json`
-  for stable split assignments and dataset metadata
+  split assignments and dataset metadata
 
-### Deduplication And Grouping
+### Deduplication
 
 The dataset builder groups images by:
 
@@ -238,7 +221,7 @@ The dataset builder groups images by:
 - normalized pixel digest
 - perceptual hash proximity
 
-That prevents obvious duplicates and near-duplicates from leaking across splits.
+This prevents obvious duplicates and near-duplicates from leaking across splits.
 
 ### Split Policy
 
@@ -246,35 +229,33 @@ The split policy is intentionally asymmetric:
 
 - blind `val` and `test` prioritize manually labeled exported avatars
 - held-out collection positives are included as a fixed extra positive slice
-- routine training uses the much larger mix of exported labels, reviewed labels, silver labels, and collection positives
-
-This keeps evaluation honest while still allowing broader training input.
+- routine training uses the larger mix of exported labels, reviewed labels, silver labels, and collection positives
 
 ## Step 8: Trust Tiers And Weights
 
 The training set uses three trust tiers:
 
 - **Gold**
-  Full manual exported labels
+  full manual exported labels
 - **Trusted**
-  Human-confirmed batch labels and collection corpus samples
+  human-confirmed batch labels and collection corpus samples
 - **Weak**
-  Silver labels
+  silver labels
 
-Current training weights are:
+Current weights are:
 
 - `manual`: `1.0`
 - `model_reviewed`: `0.7`
 - `silver`: `0.35`
 - collection corpus positives: `0.5`
 
-The idea is simple:
+The intended effect is:
 
-- gold labels should dominate
-- trusted labels should matter, but less
-- weak labels should shape the boundary without steering it too strongly
+- gold labels dominate
+- trusted labels matter, but less
+- weak labels shape the boundary without steering it too strongly
 
-## Step 9: Train A Candidate Model
+## Step 9: Train A Candidate
 
 Run:
 
@@ -282,18 +263,18 @@ Run:
 uv run milady train --run-id <candidate-run-id>
 ```
 
-Training reads the split JSONL files and fine-tunes the classifier on your local machine. Each run writes a directory under:
+Training reads the split JSONL files and writes a run directory under:
 
 - `cache/models/mobilenet_v3_small/<run-id>/`
 
 That run directory contains:
 
 - checkpoints
-- a `summary.json`
+- `summary.json`
 - validation and test metrics
-- dataset split metadata used for the run
+- dataset split metadata for the run
 
-The trainer uses the same image preprocessing logic as the extension runtime so offline metrics match deployed behavior as closely as possible.
+The trainer uses the same image preprocessing logic as the extension runtime so offline metrics match deployed behavior.
 
 ## Step 10: Compare Before Promotion
 
@@ -305,19 +286,11 @@ uv run milady compare --run-id <current-prod-run-id> --run-id <candidate-run-id>
 uv run milady export-errors --compare-dir <compare-dir>
 ```
 
-This step is mandatory in practice, even if it is just a local habit and not a hard enforcement rule.
+This is the decision point before promotion.
 
-### Why Compare Matters
+`compare` re-evaluates runs side by side on the same evaluation set. `export-errors` turns false positives and false negatives into image folders so you can inspect what changed.
 
-A run can look good in its own training summary but still be worse than the current production model when both are evaluated on the same set.
-
-`compare` solves that by re-evaluating runs side by side on the same evaluation set.
-
-### Error Export
-
-`export-errors` turns false positives and false negatives into image folders so you can inspect what each model is missing or misfiring on.
-
-That is one of the highest-value feedback loops in the system, because it tells you whether the next gains should come from:
+This is where you find out whether the next improvement should come from:
 
 - more hard negatives
 - more edited positives
@@ -340,21 +313,7 @@ This updates:
 
 The extension then uses those artifacts at runtime.
 
-## What “Good” Looks Like
-
-At this stage of the project, the model is already good enough that the highest-value work is usually not “label more random avatars.”
-
-The best improvements now usually come from:
-
-- reviewing uncertain items
-- reviewing high-score false positives
-- harvesting missed positives from compare error folders
-- keeping evaluation honest
-- promoting only after direct comparison
-
-That is why the pipeline has shifted from broad manual labeling toward model-guided review.
-
-## Typical End-To-End Command Loop
+## Typical Command Loop
 
 ```bash
 uv run milady ingest
@@ -375,14 +334,14 @@ pnpm run build
 
 ## Summary
 
-The important conceptual split is:
+The training pipeline is:
 
-- the extension gathers raw sightings
-- the scorer ranks what matters
-- the review app turns those rankings into better labels
-- the dataset builder turns those labels into stable splits
-- the trainer produces a candidate
-- compare decides whether it is actually better
-- export ships it back into the extension
-
-That loop is the whole product.
+- collect and export avatar sightings
+- ingest them into the catalog
+- download avatars and positive collections
+- score the catalog with the current model
+- review high-value cases
+- build stable splits
+- train a candidate
+- compare it against the current production model
+- export it back into the extension if it wins
