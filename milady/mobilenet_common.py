@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import math
 import random
 import sqlite3
@@ -24,6 +23,7 @@ from .pipeline_common import (
     inference_variant_cache_path,
     write_npz_atomic,
 )
+from .wire import DatasetEntryPayload, dump_jsonl, load_jsonl
 
 MODEL_IMAGE_SIZE = 128
 MODEL_MEAN = [0.485, 0.456, 0.406]
@@ -121,26 +121,19 @@ def apply_training_augment(image: Image.Image) -> Image.Image:
 
 
 def load_dataset_entries(path: Path) -> list[DatasetEntry]:
-    entries: list[DatasetEntry] = []
-    if not path.exists():
-        return entries
-    for line in path.read_text().splitlines():
-        if not line.strip():
-            continue
-        payload = json.loads(line)
-        entries.append(
-            DatasetEntry(
-                sample_id=str(payload["id"]),
-                path=Path(str(payload["path"])),
-                label=str(payload["label"]),
-                source=str(payload["source"]),
-                split=str(payload["split"]),
-                label_source=str(payload["labelSource"]),
-                label_tier=str(payload["labelTier"]),
-                sample_weight=float(payload["sampleWeight"]),
-            )
+    return [
+        DatasetEntry(
+            sample_id=payload.id,
+            path=Path(payload.path),
+            label=payload.label,
+            source=payload.source,
+            split=payload.split,
+            label_source=payload.label_source,
+            label_tier=payload.label_tier,
+            sample_weight=payload.sample_weight,
         )
-    return entries
+        for payload in load_jsonl(path, DatasetEntryPayload)
+    ]
 
 
 def compute_metrics(probabilities: list[float], labels: list[int], threshold: float) -> dict[str, float]:
@@ -220,23 +213,22 @@ def score_logits_to_probabilities(logits: torch.Tensor) -> torch.Tensor:
 
 
 def dataset_entries_to_jsonl(entries: list[DatasetEntry], path: Path) -> None:
-    lines = [
-        json.dumps(
-            {
-                "id": entry.sample_id,
-                "path": str(entry.path),
-                "label": entry.label,
-                "source": entry.source,
-                "split": entry.split,
-                "labelSource": entry.label_source,
-                "labelTier": entry.label_tier,
-                "sampleWeight": entry.sample_weight,
-            }
-        )
-        for entry in entries
-    ]
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(lines) + ("\n" if lines else ""))
+    dump_jsonl(
+        path,
+        [
+            DatasetEntryPayload(
+                id=entry.sample_id,
+                path=str(entry.path),
+                label=entry.label,
+                source=entry.source,
+                split=entry.split,
+                label_source=entry.label_source,
+                label_tier=entry.label_tier,
+                sample_weight=entry.sample_weight,
+            )
+            for entry in entries
+        ],
+    )
 
 
 def load_image_for_inference_with_cache(path: Path, connection: sqlite3.Connection) -> torch.Tensor:

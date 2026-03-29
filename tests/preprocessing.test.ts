@@ -12,7 +12,7 @@ import type { ModelMetadata } from "../src/shared/types";
 describe("runtime preprocessing", () => {
   it("resolves runtime model config from metadata with defaults", () => {
     const metadata: ModelMetadata = {
-      generatedAt: "2026-03-29T00:00:00Z",
+      generated_at: "2026-03-29T00:00:00Z",
       threshold: 0.5,
     };
     expect(resolveRuntimeModelConfig(metadata)).toEqual({
@@ -66,9 +66,9 @@ describe("runtime preprocessing", () => {
     const features = await computeNodeImageFeatures(
       image,
       resolveRuntimeModelConfig({
-        generatedAt: "2026-03-29T00:00:00Z",
+        generated_at: "2026-03-29T00:00:00Z",
         threshold: 0.5,
-        inputSize: 32,
+        input_size: 32,
         channels: 3,
         mean: [0.485, 0.456, 0.406],
         std: [0.229, 0.224, 0.225],

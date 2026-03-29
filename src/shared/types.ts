@@ -43,14 +43,15 @@ export type CollectedAvatarMap = Record<string, CollectedAvatar>;
 
 export interface ModelMetadata {
   architecture?: string;
-  classNames?: string[];
-  inputSize?: number;
+  class_names?: string[];
+  input_size?: number;
   channels?: number;
   mean?: [number, number, number];
   std?: [number, number, number];
-  positiveIndex?: number;
-  generatedAt: string;
+  positive_index?: number;
+  generated_at: string;
   threshold: number;
+  run_id?: string;
 }
 
 export interface DetectionResult {

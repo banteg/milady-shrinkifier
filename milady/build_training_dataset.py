@@ -17,10 +17,20 @@ from .pipeline_common import (
     connect_offline_cache_db,
     get_file_fingerprint,
     now_iso,
-    read_json_file,
     resolve_repo_path,
     sha256_bytes,
-    write_json_file,
+)
+from .wire import (
+    CollectionManifest,
+    SplitManifest,
+    SplitManifestCanonical,
+    SplitManifestEvaluationPolicy,
+    SplitManifestGroup,
+    SplitManifestMember,
+    SplitManifestRatios,
+    SplitSummaryPayload,
+    dump_json,
+    load_json,
 )
 
 COLLECTIONS_BY_SLUG = {collection.slug: collection for collection in NFT_COLLECTIONS}
@@ -168,7 +178,7 @@ def main() -> None:
 
         dataset_entries: list[DatasetEntry] = []
         exported_split_updates: dict[str, str] = {}
-        manifest_groups: list[dict[str, object]] = []
+        manifest_groups: list[SplitManifestGroup] = []
 
         for group in groups:
             split = assignments[group.group_id]
@@ -188,39 +198,39 @@ def main() -> None:
                 if member.exported_sha is not None:
                     exported_split_updates[member.exported_sha] = split
             manifest_groups.append(
-                {
-                    "groupId": group.group_id,
-                    "label": group.label,
-                    "split": split,
-                    "canonical": {
-                        "id": group.canonical.sample_id,
-                        "path": str(group.canonical.path),
-                        "source": group.canonical.source,
-                        "labelSource": group.canonical.label_source,
-                        "labelTier": group.canonical.label_tier,
-                        "sampleWeight": group.canonical.sample_weight,
-                        "blindEvalEligible": group.blind_eval_eligible,
-                        "rawSha": group.canonical.raw_sha,
-                        "pixelDigest": group.canonical.pixel_digest,
-                        "perceptualHash": group.canonical.perceptual_hash,
-                    },
-                    "members": [
-                        {
-                            "id": member.sample_id,
-                            "path": str(member.path),
-                            "source": member.source,
-                            "labelSource": member.label_source,
-                            "labelTier": member.label_tier,
-                            "sampleWeight": member.sample_weight,
-                            "blindEvalEligible": member.blind_eval_eligible,
-                            "rawSha": member.raw_sha,
-                            "pixelDigest": member.pixel_digest,
-                            "perceptualHash": member.perceptual_hash,
-                            "exportedSha": member.exported_sha,
-                        }
+                SplitManifestGroup(
+                    group_id=group.group_id,
+                    label=group.label,
+                    split=split,
+                    canonical=SplitManifestCanonical(
+                        id=group.canonical.sample_id,
+                        path=str(group.canonical.path),
+                        source=group.canonical.source,
+                        label_source=group.canonical.label_source,
+                        label_tier=group.canonical.label_tier,
+                        sample_weight=group.canonical.sample_weight,
+                        blind_eval_eligible=group.blind_eval_eligible,
+                        raw_sha=group.canonical.raw_sha,
+                        pixel_digest=group.canonical.pixel_digest,
+                        perceptual_hash=group.canonical.perceptual_hash,
+                    ),
+                    members=[
+                        SplitManifestMember(
+                            id=member.sample_id,
+                            path=str(member.path),
+                            source=member.source,
+                            label_source=member.label_source,
+                            label_tier=member.label_tier,
+                            sample_weight=member.sample_weight,
+                            blind_eval_eligible=member.blind_eval_eligible,
+                            raw_sha=member.raw_sha,
+                            pixel_digest=member.pixel_digest,
+                            perceptual_hash=member.perceptual_hash,
+                            exported_sha=member.exported_sha,
+                        )
                         for member in sorted(group.members, key=lambda item: item.sample_id)
                     ],
-                }
+                )
             )
 
         for exported_sha, split in exported_split_updates.items():
@@ -241,14 +251,14 @@ def main() -> None:
             dataset_entries_to_jsonl(entries, SPLIT_ROOT / f"{split_name}.jsonl")
 
         summary = {
-            "manifestMode": manifest_mode,
-            "sampleCount": len(samples),
-            "groupCount": len(groups),
-            "dedupedSampleCount": len(dataset_entries),
-            "duplicatesRemoved": len(samples) - len(dataset_entries),
-            "blindEvalEligibleGroups": sum(1 for group in groups if group.blind_eval_eligible),
-            "trainOnlyGroups": sum(1 for group in groups if not group.blind_eval_eligible),
-            "collectionBlindHoldoutGroups": len(collection_holdout_assignments),
+            "manifest_mode": manifest_mode,
+            "sample_count": len(samples),
+            "group_count": len(groups),
+            "deduped_sample_count": len(dataset_entries),
+            "duplicates_removed": len(samples) - len(dataset_entries),
+            "blind_eval_eligible_groups": sum(1 for group in groups if group.blind_eval_eligible),
+            "train_only_groups": sum(1 for group in groups if not group.blind_eval_eligible),
+            "collection_blind_holdout_groups": len(collection_holdout_assignments),
             "splits": {
                 split_name: {
                     "total": len(entries),
@@ -260,30 +270,36 @@ def main() -> None:
                 for split_name, entries in by_split.items()
             },
         }
-        write_json_file(
+        dump_json(
             SPLIT_MANIFEST_PATH,
+            SplitManifest(
+                version=2,
+                generated_at=now_iso(),
+                mode=manifest_mode,
+                evaluation_policy=SplitManifestEvaluationPolicy(
+                    blind_eval_includes_collection_holdout_positives=True,
+                    gold_label_source=GOLD_LABEL_SOURCE,
+                    trusted_label_sources=sorted(TRUSTED_LABEL_SOURCES),
+                    trusted_collection_weight=TRUSTED_COLLECTION_WEIGHT,
+                    model_label_weight=args.model_label_weight,
+                    collection_blind_holdout_val_count=COLLECTION_HOLDOUT_VAL_COUNT,
+                    collection_blind_holdout_test_count=COLLECTION_HOLDOUT_TEST_COUNT,
+                ),
+                ratios=SplitManifestRatios(
+                    train=args.train_ratio,
+                    val=args.val_ratio,
+                    test=args.test_ratio,
+                ),
+                groups=manifest_groups,
+            ),
+        )
+        dump_json(
+            SPLIT_ROOT / "summary.json",
             {
-                "version": 2,
-                "generatedAt": now_iso(),
-                "mode": manifest_mode,
-                "evaluationPolicy": {
-                    "blindEvalIncludesCollectionHoldoutPositives": True,
-                    "goldLabelSource": GOLD_LABEL_SOURCE,
-                    "trustedLabelSources": sorted(TRUSTED_LABEL_SOURCES),
-                    "trustedCollectionWeight": TRUSTED_COLLECTION_WEIGHT,
-                    "modelLabelWeight": args.model_label_weight,
-                    "collectionBlindHoldoutValCount": COLLECTION_HOLDOUT_VAL_COUNT,
-                    "collectionBlindHoldoutTestCount": COLLECTION_HOLDOUT_TEST_COUNT,
-                },
-                "ratios": {
-                    "train": args.train_ratio,
-                    "val": args.val_ratio,
-                    "test": args.test_ratio,
-                },
-                "groups": manifest_groups,
+                split_name: SplitSummaryPayload(**split_summary)
+                for split_name, split_summary in summary["splits"].items()
             },
         )
-        (SPLIT_ROOT / "summary.json").write_text(json.dumps(summary["splits"], indent=2, sort_keys=True))
         print("[build-dataset] wrote split manifest and jsonl files", flush=True)
         print(json.dumps(summary, indent=2, sort_keys=True))
     finally:
@@ -362,19 +378,19 @@ def load_collection_rows() -> list[tuple[object, int, Path]]:
     if not COLLECTION_MANIFEST_PATH.exists():
         raise SystemExit("Missing collection manifest. Run `uv run milady download-collections` first.")
 
-    manifest = read_json_file(COLLECTION_MANIFEST_PATH)
-    raw_collections = manifest["collections"]
+    manifest = load_json(COLLECTION_MANIFEST_PATH, CollectionManifest)
+    raw_collections = manifest.collections
 
     rows: list[tuple[object, int, Path]] = []
     for collection in raw_collections:
-        slug = str(collection["slug"])
-        samples = collection["samples"]
+        slug = collection.slug
+        samples = collection.samples
         spec = COLLECTIONS_BY_SLUG.get(slug)
         if spec is None:
             raise SystemExit(f"Unknown collection in manifest: {slug}")
         for sample in samples:
-            token_id = int(sample["tokenId"])
-            local_path = str(sample["localPath"])
+            token_id = sample.token_id
+            local_path = sample.local_path
             path = resolve_repo_path(local_path)
             if not path.exists():
                 raise SystemExit(f"Missing collection sample file: {path}")
@@ -460,21 +476,13 @@ def assign_group_splits(groups: list[GroupRecord], args: argparse.Namespace, man
         )
         return assignments, "fresh"
 
-    manifest = read_json_file(manifest_path)
-    raw_groups = manifest.get("groups")
-    if not isinstance(raw_groups, list):
-        assignments = train_only_assignments | initial_group_assignments(
-            blind_eval_groups,
-            args.train_ratio,
-            args.val_ratio,
-            args.test_ratio,
-        )
-        return assignments, "fresh"
+    manifest = load_json(manifest_path, SplitManifest)
+    raw_groups = manifest.groups
 
     assignments = {
-        str(group["groupId"]): str(group["split"])
+        group.group_id: group.split
         for group in raw_groups
-        if isinstance(group, dict) and group.get("split") in {"train", "val", "test"}
+        if group.split in {"train", "val", "test"}
     }
     assignments.update(forced_eval_assignments)
     for group_id, split in train_only_assignments.items():

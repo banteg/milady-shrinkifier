@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import random
 from datetime import UTC, datetime
@@ -28,6 +27,16 @@ from .mobilenet_common import (
     probabilities_from_model,
 )
 from .pipeline_common import MODEL_RUN_ROOT, SPLIT_ROOT, connect_offline_cache_db
+from .wire import (
+    DiagnosticBucket,
+    MetricSummary,
+    RunDatasetSplitSummary,
+    RunEvaluationPolicy,
+    RunHistoryEntry,
+    RunSummary,
+    dump_json,
+    encode_json,
+)
 
 HEADLINE_EVAL_POLICY = "manual_export_gold_plus_collection_positive_holdout"
 
@@ -250,45 +259,57 @@ def main() -> None:
         test_probabilities, test_labels = evaluate(model, test_entries, device, args.batch_size, cache_connection)
         test_metrics = compute_metrics(test_probabilities, test_labels, best_threshold)
 
-        summary = {
-            "runId": args.run_id,
-            "architecture": "mobilenet_v3_small",
-            "classNames": CLASS_NAMES,
-            "positiveIndex": POSITIVE_INDEX,
-            "imageSize": MODEL_IMAGE_SIZE,
-            "mean": MODEL_MEAN,
-            "std": MODEL_STD,
-            "precisionFloor": args.precision_floor,
-            "seed": args.seed,
-            "numWorkers": max(0, args.num_workers),
-            "prefetchFactor": max(1, args.prefetch_factor) if args.num_workers > 0 else None,
-            "pinMemory": False,
-            "headWarmupEpochs": head_warmup_epochs,
-            "scheduler": args.scheduler,
-            "headLearningRate": head_learning_rate,
-            "learningRate": args.learning_rate,
-            "labelSmoothing": args.label_smoothing,
-            "augment": args.augment == "on",
-            "evaluationPolicy": {
-                "headline": HEADLINE_EVAL_POLICY,
-                "trainIncludesTrustedSynthetic": True,
-                "trainIncludesWeakLabels": True,
-            },
-            "datasetSplits": {
+        summary = RunSummary(
+            run_id=args.run_id,
+            architecture="mobilenet_v3_small",
+            class_names=CLASS_NAMES,
+            positive_index=POSITIVE_INDEX,
+            image_size=MODEL_IMAGE_SIZE,
+            mean=MODEL_MEAN,
+            std=MODEL_STD,
+            precision_floor=args.precision_floor,
+            seed=args.seed,
+            num_workers=max(0, args.num_workers),
+            prefetch_factor=max(1, args.prefetch_factor) if args.num_workers > 0 else None,
+            pin_memory=False,
+            head_warmup_epochs=head_warmup_epochs,
+            scheduler=args.scheduler,
+            head_learning_rate=head_learning_rate,
+            learning_rate=args.learning_rate,
+            label_smoothing=args.label_smoothing,
+            augment=args.augment == "on",
+            evaluation_policy=RunEvaluationPolicy(
+                headline=HEADLINE_EVAL_POLICY,
+                train_includes_trusted_synthetic=True,
+                train_includes_weak_labels=False,
+            ),
+            dataset_splits={
                 "train": split_summary(train_entries),
                 "val": split_summary(val_entries),
                 "test": split_summary(test_entries),
             },
-            "bestEpoch": best_epoch,
-            "threshold": best_threshold,
-            "history": history,
-            "valMetrics": best_val_metrics,
-            "testMetrics": test_metrics,
-            "valDiagnosticsBySource": diagnostic_metrics_by(entries=val_entries, probabilities=val_probabilities, threshold=best_threshold),
-            "testDiagnosticsBySource": diagnostic_metrics_by(entries=test_entries, probabilities=test_probabilities, threshold=best_threshold),
-            "checkpointPath": str(checkpoint_path),
-        }
-        (run_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True))
+            best_epoch=best_epoch,
+            threshold=best_threshold,
+            history=[
+                RunHistoryEntry(
+                    epoch=int(entry["epoch"]),
+                    phase=str(entry["phase"]),
+                    learning_rate=float(entry["learningRate"]),
+                    train_loss=float(entry["trainLoss"]),
+                    val_precision=float(entry["valPrecision"]),
+                    val_recall=float(entry["valRecall"]),
+                    val_f1=float(entry["valF1"]),
+                    threshold=float(entry["threshold"]),
+                )
+                for entry in history
+            ],
+            val_metrics=metric_summary_from_dict(best_val_metrics),
+            test_metrics=metric_summary_from_dict(test_metrics),
+            val_diagnostics_by_source=diagnostic_metrics_by(entries=val_entries, probabilities=val_probabilities, threshold=best_threshold),
+            test_diagnostics_by_source=diagnostic_metrics_by(entries=test_entries, probabilities=test_probabilities, threshold=best_threshold),
+            checkpoint_path=str(checkpoint_path),
+        )
+        dump_json(run_dir / "summary.json", summary)
         if wandb_run is not None:
             wandb.log(
                 {
@@ -329,7 +350,7 @@ def main() -> None:
             f"blind_test_recall={test_metrics['recall']:.4f}",
             flush=True,
         )
-        print(json.dumps(summary, indent=2, sort_keys=True))
+        print(encode_json(summary, pretty=True).decode("utf-8"))
     finally:
         cache_connection.close()
 
@@ -679,16 +700,16 @@ def format_duration(seconds: float) -> str:
     return f"{secs}s"
 
 
-def diagnostic_metrics_by(entries: list, probabilities: list[float], threshold: float) -> dict[str, dict[str, dict[str, float] | int | str]]:
-    diagnostics: dict[str, dict[str, dict[str, float] | int | str]] = {}
+def diagnostic_metrics_by(entries: list, probabilities: list[float], threshold: float) -> dict[str, dict[str, DiagnosticBucket]]:
+    diagnostics: dict[str, dict[str, DiagnosticBucket]] = {}
     group_fields = {
         "source": "source",
-        "labelSource": "label_source",
-        "labelTier": "label_tier",
+        "label_source": "label_source",
+        "label_tier": "label_tier",
     }
     for group_name, field_name in group_fields.items():
         values = sorted({str(getattr(entry, field_name)) for entry in entries})
-        grouped_metrics: dict[str, dict[str, float] | int | str] = {}
+        grouped_metrics: dict[str, DiagnosticBucket] = {}
         for value in values:
             indices = [
                 index
@@ -697,25 +718,31 @@ def diagnostic_metrics_by(entries: list, probabilities: list[float], threshold: 
             ]
             if not indices:
                 continue
-            grouped_metrics[value] = {
-                "count": len(indices),
-                "metrics": compute_metrics([probabilities[index] for index in indices], [1 if entries[index].label == "milady" else 0 for index in indices], threshold),
-            }
+            grouped_metrics[value] = DiagnosticBucket(
+                count=len(indices),
+                metrics=metric_summary_from_dict(
+                    compute_metrics(
+                        [probabilities[index] for index in indices],
+                        [1 if entries[index].label == "milady" else 0 for index in indices],
+                        threshold,
+                    )
+                ),
+            )
         diagnostics[group_name] = grouped_metrics
     return diagnostics
 
 
-def split_summary(entries: list) -> dict[str, object]:
-    return {
-        "total": len(entries),
-        "classCounts": {
+def split_summary(entries: list) -> RunDatasetSplitSummary:
+    return RunDatasetSplitSummary(
+        total=len(entries),
+        class_counts={
             "milady": sum(1 for entry in entries if entry.label == "milady"),
             "not_milady": sum(1 for entry in entries if entry.label != "milady"),
         },
-        "sourceCounts": count_by(entries, "source"),
-        "labelSourceCounts": count_by(entries, "label_source"),
-        "labelTierCounts": count_by(entries, "label_tier"),
-    }
+        source_counts=count_by(entries, "source"),
+        label_source_counts=count_by(entries, "label_source"),
+        label_tier_counts=count_by(entries, "label_tier"),
+    )
 
 
 def count_by(entries: list, attribute: str) -> dict[str, int]:
@@ -724,6 +751,19 @@ def count_by(entries: list, attribute: str) -> dict[str, int]:
         value: sum(1 for entry in entries if str(getattr(entry, attribute)) == value)
         for value in values
     }
+
+
+def metric_summary_from_dict(metrics: dict[str, float]) -> MetricSummary:
+    return MetricSummary(
+        accuracy=metrics["accuracy"],
+        precision=metrics["precision"],
+        recall=metrics["recall"],
+        f1=metrics["f1"],
+        true_positive=metrics["truePositive"],
+        false_positive=metrics["falsePositive"],
+        true_negative=metrics["trueNegative"],
+        false_negative=metrics["falseNegative"],
+    )
 
 
 if __name__ == "__main__":

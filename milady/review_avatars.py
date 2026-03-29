@@ -8,11 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import msgspec
 import uvicorn
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
 
 from .pipeline_common import (
     CATALOG_PATH,
@@ -27,32 +27,29 @@ from .pipeline_common import (
     queue_items,
     resolve_repo_path,
 )
+from .wire import (
+    ReviewBatchLabelRequest,
+    ReviewBatchLabelResponse,
+    ReviewBatchPayload,
+    ReviewChangedResponse,
+    ReviewGridPayload,
+    ReviewHistoryEntry,
+    ReviewHistoryPayload,
+    ReviewItemResponse,
+    ReviewLabelRequest,
+    ReviewQueuePayload,
+    ReviewSummaryPayload,
+    ReviewUndoBatchResponse,
+    ReviewUndoSingleResponse,
+    decode_json,
+    encode_json,
+)
 
 
 REVIEW_STATIC_ROOT = Path(__file__).resolve().with_name("review_static")
 REVIEW_INDEX_PATH = REVIEW_STATIC_ROOT / "review.html"
 REVIEW_ASSET_ROOT = REVIEW_STATIC_ROOT / "assets"
 MANUAL_LABEL_SOURCE = "manual"
-
-
-class LabelPayload(BaseModel):
-    sha256: str
-    label: str
-    note: str | None = None
-
-
-class BatchLabelItem(BaseModel):
-    sha256: str
-    label: str
-
-
-class BatchLabelPayload(BaseModel):
-    items: list[BatchLabelItem]
-
-
-LabelPayload.model_rebuild()
-BatchLabelItem.model_rebuild()
-BatchLabelPayload.model_rebuild()
 
 
 @dataclass(slots=True)
@@ -163,14 +160,18 @@ def require_labeled_filter(filter_name: str) -> str:
 def index_payload(snapshot: ReviewSnapshot, queue_name: str, index: int) -> dict[str, Any]:
     items = snapshot.queue_lists[queue_name]
     if not items:
-        return {"queue": queue_name, "index": 0, "total": 0, "item": None}
+        return ReviewQueuePayload(queue=queue_name, index=0, total=0, item=None)
     bounded_index = min(index, len(items) - 1)
-    return {
-        "queue": queue_name,
-        "index": bounded_index,
-        "total": len(items),
-        "item": items[bounded_index].to_dict(),
-    }
+    return ReviewQueuePayload(
+        queue=queue_name,
+        index=bounded_index,
+        total=len(items),
+        item=items[bounded_index].to_payload(),
+    )
+
+
+def json_response(payload: Any, status_code: int = 200) -> Response:
+    return Response(content=encode_json(payload), media_type="application/json", status_code=status_code)
 
 
 @app.get("/", response_model=None)
@@ -184,20 +185,20 @@ def root():
 
 
 @app.get("/api/summary")
-def summary(run_id: str | None = Query(None)) -> JSONResponse:
+def summary(run_id: str | None = Query(None)) -> Response:
     snapshot = require_snapshot(run_id)
     counts = {queue_name: len(snapshot.queue_lists[queue_name]) for queue_name in REVIEW_QUEUES}
-    return JSONResponse(
-        {
-            "catalogPath": snapshot.catalog_path,
-            "selectedRunId": snapshot.selected_run_id,
-            "availableRunIds": snapshot.available_run_ids,
-            "totalImages": len(snapshot.items),
-            "queueCounts": counts,
-            "labelCounts": snapshot.label_counts,
-            "needsReview": snapshot.needs_review,
-            "canUndo": snapshot.can_undo,
-        }
+    return json_response(
+        ReviewSummaryPayload(
+            catalog_path=snapshot.catalog_path,
+            selected_run_id=snapshot.selected_run_id,
+            available_run_ids=snapshot.available_run_ids,
+            total_images=len(snapshot.items),
+            queue_counts=counts,
+            label_counts=snapshot.label_counts,
+            needs_review=snapshot.needs_review,
+            can_undo=snapshot.can_undo,
+        )
     )
 
 
@@ -206,10 +207,10 @@ def get_queue(
     queue: str = Query("needs_review"),
     index: int = Query(0, ge=0),
     run_id: str | None = Query(None),
-) -> JSONResponse:
+) -> Response:
     snapshot = require_snapshot(run_id)
     queue_name = require_queue_name(queue)
-    return JSONResponse(index_payload(snapshot, queue_name, index))
+    return json_response(index_payload(snapshot, queue_name, index))
 
 
 @app.get("/api/batch")
@@ -218,48 +219,48 @@ def get_batch(
     limit: int = Query(9, ge=1, le=25),
     offset: int = Query(0, ge=0),
     run_id: str | None = Query(None),
-) -> JSONResponse:
+) -> Response:
     snapshot = require_snapshot(run_id)
     queue_name = require_queue_name(queue)
     items = snapshot.queue_lists[queue_name]
     bounded_offset = min(offset, max(0, len(items) - 1)) if items else 0
     sliced_items = items[bounded_offset : bounded_offset + limit]
-    return JSONResponse(
-        {
-            "queue": queue_name,
-            "total": len(items),
-            "offset": bounded_offset,
-            "items": [item.to_dict() for item in sliced_items],
-        }
+    return json_response(
+        ReviewBatchPayload(
+            queue=queue_name,
+            total=len(items),
+            offset=bounded_offset,
+            items=[item.to_payload() for item in sliced_items],
+        )
     )
 
 
 @app.get("/api/item/{sha256}")
-def get_item(sha256: str, run_id: str | None = Query(None)) -> JSONResponse:
+def get_item(sha256: str, run_id: str | None = Query(None)) -> Response:
     snapshot = require_snapshot(run_id)
     item = snapshot.items_by_sha.get(sha256)
     if item is None:
         raise HTTPException(status_code=404, detail="Review item not found")
-    return JSONResponse({"item": item.to_dict()})
+    return json_response(ReviewItemResponse(item=item.to_payload()))
 
 
 @app.get("/api/history")
-def get_history(limit: int = Query(24, ge=1, le=100), run_id: str | None = Query(None)) -> JSONResponse:
+def get_history(limit: int = Query(24, ge=1, le=100), run_id: str | None = Query(None)) -> Response:
     snapshot = require_snapshot(run_id)
-    history = []
+    history: list[ReviewHistoryEntry] = []
     for event in snapshot.recent_events[:limit]:
         item = snapshot.items_by_sha.get(str(event["image_sha256"]))
         history.append(
-            {
-                "eventId": int(event["id"]),
-                "sha256": str(event["image_sha256"]),
-                "createdAt": str(event["created_at"]),
-                "newLabel": str(event["new_label"]),
-                "previousLabel": event["previous_label"],
-                "item": item.to_dict() if item else None,
-            }
+            ReviewHistoryEntry(
+                event_id=int(event["id"]),
+                sha256=str(event["image_sha256"]),
+                created_at=str(event["created_at"]),
+                new_label=str(event["new_label"]),
+                previous_label=event["previous_label"],
+                item=item.to_payload() if item else None,
+            )
         )
-    return JSONResponse({"history": history})
+    return json_response(ReviewHistoryPayload(history=history))
 
 
 @app.get("/api/labeled-grid")
@@ -267,17 +268,16 @@ def get_labeled_grid(
     filter_name: str = Query("all"),
     limit: int | None = Query(None, ge=1),
     run_id: str | None = Query(None),
-) -> JSONResponse:
+) -> Response:
     snapshot = require_snapshot(run_id)
     selected_filter = require_labeled_filter(filter_name)
     items = snapshot.labeled_lists[selected_filter]
     sliced_items = items[:limit] if limit is not None else items
-    return JSONResponse(
-        {
-            "filter": selected_filter,
-            "total": len(items),
-            "items": [item.to_dict() for item in sliced_items],
-        }
+    return json_response(
+        ReviewGridPayload(
+            total=len(items),
+            items=[item.to_payload() for item in sliced_items],
+        )
     )
 
 
@@ -286,22 +286,22 @@ def get_queue_grid(
     queue: str = Query("needs_review"),
     limit: int | None = Query(None, ge=1),
     run_id: str | None = Query(None),
-) -> JSONResponse:
+) -> Response:
     snapshot = require_snapshot(run_id)
     queue_name = require_queue_name(queue)
     items = snapshot.queue_lists[queue_name]
     sliced_items = items[:limit] if limit is not None else items
-    return JSONResponse(
-        {
-            "queue": queue_name,
-            "total": len(items),
-            "items": [item.to_dict() for item in sliced_items],
-        }
+    return json_response(
+        ReviewGridPayload(
+            total=len(items),
+            items=[item.to_payload() for item in sliced_items],
+        )
     )
 
 
 @app.post("/api/label")
-def label_avatar(payload: LabelPayload) -> JSONResponse:
+async def label_avatar(request: Request) -> Response:
+    payload = decode_request_body(await request.body(), ReviewLabelRequest)
     if payload.label not in LABELS:
         raise HTTPException(status_code=400, detail=f"Unsupported label: {payload.label}")
 
@@ -322,7 +322,7 @@ def label_avatar(payload: LabelPayload) -> JSONResponse:
             and existing["review_notes"] == payload.note
             and existing["label_source"] == MANUAL_LABEL_SOURCE
         ):
-            return JSONResponse({"ok": True, "changed": False})
+            return json_response(ReviewChangedResponse(ok=True, changed=False))
 
         connection.execute(
             """
@@ -364,11 +364,12 @@ def label_avatar(payload: LabelPayload) -> JSONResponse:
         connection.commit()
 
     STATE.refresh()
-    return JSONResponse({"ok": True, "changed": True})
+    return json_response(ReviewChangedResponse(ok=True, changed=True))
 
 
 @app.post("/api/batch-label")
-def batch_label(payload: BatchLabelPayload) -> JSONResponse:
+async def batch_label(request: Request) -> Response:
+    payload = decode_request_body(await request.body(), ReviewBatchLabelRequest)
     if not payload.items:
         raise HTTPException(status_code=400, detail="Batch is empty")
 
@@ -435,11 +436,11 @@ def batch_label(payload: BatchLabelPayload) -> JSONResponse:
 
     if changed_count > 0:
         STATE.refresh()
-    return JSONResponse({"ok": True, "batchId": batch_id, "count": changed_count})
+    return json_response(ReviewBatchLabelResponse(ok=True, batch_id=batch_id, count=changed_count))
 
 
 @app.post("/api/undo")
-def undo_last_label() -> JSONResponse:
+def undo_last_label() -> Response:
     with closing(connect_db()) as connection:
         event = latest_label_event(connection)
         if event is None:
@@ -480,13 +481,13 @@ def undo_last_label() -> JSONResponse:
             connection.execute("DELETE FROM label_events WHERE batch_id = ?", (batch_id,))
             connection.commit()
             STATE.refresh()
-            return JSONResponse(
-                {
-                    "ok": True,
-                    "batchId": str(batch_id),
-                    "undoneSha256List": undone_sha256,
-                    "undoneSha256": undone_sha256[0] if undone_sha256 else None,
-                }
+            return json_response(
+                ReviewUndoBatchResponse(
+                    ok=True,
+                    batch_id=str(batch_id),
+                    undone_sha256_list=undone_sha256,
+                    undone_sha256=undone_sha256[0] if undone_sha256 else None,
+                )
             )
 
         connection.execute(
@@ -513,12 +514,12 @@ def undo_last_label() -> JSONResponse:
 
     snapshot = STATE.refresh()
     item = snapshot.items_by_sha.get(undone_sha)
-    return JSONResponse(
-        {
-            "ok": True,
-            "undoneSha256": undone_sha,
-            "item": item.to_dict() if item else None,
-        }
+    return json_response(
+        ReviewUndoSingleResponse(
+            ok=True,
+            undone_sha256=undone_sha,
+            item=item.to_payload() if item else None,
+        )
     )
 
 
@@ -548,6 +549,13 @@ def recent_label_events(connection, limit: int) -> list[Any]:
 def latest_label_event(connection):
     rows = recent_label_events(connection, 1)
     return rows[0] if rows else None
+
+
+def decode_request_body(payload: bytes, type_: type[Any]) -> Any:
+    try:
+        return decode_json(payload, type_)
+    except msgspec.DecodeError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 STATE = ReviewState()

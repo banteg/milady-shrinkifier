@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 
 import torch
@@ -15,6 +14,7 @@ from .pipeline_common import (
     now_iso,
     resolve_repo_path,
 )
+from .wire import PublicModelMetadata, RunSummary, encode_json, load_json
 
 MODEL_LABEL_SOURCE = "model"
 
@@ -50,8 +50,8 @@ def main() -> None:
     if not summary_path.exists():
         raise SystemExit(f"Training summary not found: {summary_path}")
 
-    summary = json.loads(summary_path.read_text())
-    threshold = float(args.threshold if args.threshold is not None else summary["threshold"])
+    summary = load_json(summary_path, RunSummary)
+    threshold = float(args.threshold if args.threshold is not None else summary.threshold)
 
     device = choose_device(args.cpu)
     model = create_model(pretrained=False).to(device)
@@ -141,16 +141,16 @@ def main() -> None:
             )
 
         output = {
-            "runId": run_id,
+            "run_id": run_id,
             "threshold": threshold,
-            "scoredImages": scored,
-            "scoreOnly": args.score_only,
+            "scored_images": scored,
+            "score_only": args.score_only,
             "limit": args.limit,
         }
         if model_label_summary is not None:
-            output["modelLabels"] = model_label_summary
+            output["model_labels"] = model_label_summary
 
-        print(json.dumps(output, indent=2, sort_keys=True))
+        print(encode_json(output, pretty=True).decode("utf-8"))
     finally:
         cache_connection.close()
         connection.close()
@@ -215,9 +215,9 @@ def refresh_model_labels(
         )
     connection.commit()
     return {
-        "negativeCount": sum(1 for update in updates if update["label"] == "not_milady"),
-        "positiveCount": sum(1 for update in updates if update["label"] == "milady"),
-        "updatedCount": len(updates),
+        "negative_count": sum(1 for update in updates if update["label"] == "not_milady"),
+        "positive_count": sum(1 for update in updates if update["label"] == "milady"),
+        "updated_count": len(updates),
     }
 
 
@@ -226,11 +226,11 @@ def load_default_run_id() -> str:
         raise SystemExit(
             "No default promoted model metadata found. Pass --run-id explicitly or export a promoted model first."
         )
-    payload = json.loads(PUBLIC_METADATA_PATH.read_text())
-    run_id = payload.get("runId")
-    if not isinstance(run_id, str) or not run_id:
+    payload = load_json(PUBLIC_METADATA_PATH, PublicModelMetadata)
+    run_id = payload.run_id
+    if not run_id:
         raise SystemExit(
-            f"Promoted model metadata at {PUBLIC_METADATA_PATH} does not contain a valid runId."
+            f"Promoted model metadata at {PUBLIC_METADATA_PATH} does not contain a valid run_id."
         )
     return run_id
 
@@ -250,9 +250,9 @@ def build_model_label_payload(run_id: str, sha256: str, label: str, score: float
         "review_note": json.dumps(
             {
                 "type": "model_label",
-                "runId": run_id,
+                "run_id": run_id,
                 "score": score,
-                "predictedLabel": label,
+                "predicted_label": label,
             },
             sort_keys=True,
         ),

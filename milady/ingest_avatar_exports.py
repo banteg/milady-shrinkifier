@@ -16,8 +16,8 @@ from .pipeline_common import (
     min_timestamp,
     now_iso,
     parse_json_list,
-    read_json_file,
 )
+from .wire import IngestExportPayload, load_json
 
 
 def parse_args() -> argparse.Namespace:
@@ -74,25 +74,23 @@ def main() -> None:
             skipped += 1
             continue
 
-        payload = read_json_file(source_path)
-        avatars = payload.get("avatars")
-        if not isinstance(avatars, list):
-            raise SystemExit(f"Export {source_path} does not contain an avatars array.")
+        payload = load_json(source_path, IngestExportPayload)
+        avatars = payload.avatars
 
         if args.force and existing_paths:
             connection.executemany("DELETE FROM exports WHERE export_path = ?", ((path,) for path in existing_paths))
 
         for avatar in avatars:
-            normalized_url = str(avatar["normalizedUrl"])
+            normalized_url = avatar.normalized_url
             existing = connection.execute(
                 "SELECT * FROM avatar_urls WHERE normalized_url = ?",
                 (normalized_url,),
             ).fetchone()
             now = now_iso()
 
-            incoming_handles = [str(handle) for handle in avatar.get("handles", []) if isinstance(handle, str)]
-            incoming_display_names = [str(name) for name in avatar.get("displayNames", []) if isinstance(name, str)]
-            incoming_source_surfaces = [str(name) for name in avatar.get("sourceSurfaces", []) if isinstance(name, str)]
+            incoming_handles = avatar.handles
+            incoming_display_names = avatar.display_names
+            incoming_source_surfaces = avatar.source_surfaces
 
             if existing:
                 merged_handles = merge_string_lists(parse_json_list(existing["handles_json"]), incoming_handles)
@@ -117,17 +115,17 @@ def main() -> None:
                     WHERE normalized_url = ?
                     """,
                     (
-                        str(avatar.get("originalUrl") or existing["original_url"]),
+                        str(avatar.original_url or existing["original_url"]),
                         encode_json_list(merged_handles),
                         encode_json_list(merged_display_names),
                         encode_json_list(merged_sources),
-                        int(existing["seen_count"]) + int(avatar.get("seenCount", 0)),
-                        min_timestamp(existing["first_seen_at"], str(avatar.get("firstSeenAt"))),
-                        max_timestamp(existing["last_seen_at"], str(avatar.get("lastSeenAt"))),
-                        coalesce_latest(existing["example_profile_url"], avatar.get("exampleProfileUrl")),
-                        coalesce_latest(existing["example_notification_url"], avatar.get("exampleNotificationUrl")),
-                        coalesce_latest(existing["example_tweet_url"], avatar.get("exampleTweetUrl")),
-                        1 if (bool(existing["whitelisted"]) or avatar.get("whitelisted") is True) else 0,
+                        int(existing["seen_count"]) + avatar.seen_count,
+                        min_timestamp(existing["first_seen_at"], avatar.first_seen_at),
+                        max_timestamp(existing["last_seen_at"], avatar.last_seen_at),
+                        coalesce_latest(existing["example_profile_url"], avatar.example_profile_url),
+                        coalesce_latest(existing["example_notification_url"], avatar.example_notification_url),
+                        coalesce_latest(existing["example_tweet_url"], avatar.example_tweet_url),
+                        1 if (bool(existing["whitelisted"]) or avatar.whitelisted) else 0,
                         now,
                         normalized_url,
                     ),
@@ -154,17 +152,17 @@ def main() -> None:
                     """,
                     (
                         normalized_url,
-                        str(avatar.get("originalUrl") or normalized_url),
+                        str(avatar.original_url or normalized_url),
                         encode_json_list(incoming_handles),
                         encode_json_list(incoming_display_names),
                         encode_json_list(incoming_source_surfaces),
-                        int(avatar.get("seenCount", 0)),
-                        str(avatar.get("firstSeenAt") or now),
-                        str(avatar.get("lastSeenAt") or now),
-                        avatar.get("exampleProfileUrl"),
-                        avatar.get("exampleNotificationUrl"),
-                        avatar.get("exampleTweetUrl"),
-                        1 if avatar.get("whitelisted") is True else 0,
+                        avatar.seen_count,
+                        str(avatar.first_seen_at or now),
+                        str(avatar.last_seen_at or now),
+                        avatar.example_profile_url,
+                        avatar.example_notification_url,
+                        avatar.example_tweet_url,
+                        1 if avatar.whitelisted else 0,
                         now,
                         now,
                     ),
@@ -186,11 +184,11 @@ def main() -> None:
             (
                 export_record_path,
                 stored_path.name,
-                payload.get("exportedAt"),
+                payload.exported_at,
                 now_iso(),
-                int(payload.get("version", 0)),
-                int(payload.get("avatarCount", len(avatars))),
-                int(payload.get("totalSightings", 0)),
+                payload.version,
+                payload.avatar_count or len(avatars),
+                payload.total_sightings,
             ),
         )
         connection.commit()

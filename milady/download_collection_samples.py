@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import html
-import json
 import random
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -12,7 +11,8 @@ from pathlib import Path
 
 import httpx
 
-from .pipeline_common import COLLECTION_MANIFEST_PATH, COLLECTION_ROOT, guess_extension, write_json_file
+from .pipeline_common import COLLECTION_MANIFEST_PATH, COLLECTION_ROOT, guess_extension
+from .wire import CollectionFailure, CollectionManifest, CollectionManifestCollection, CollectionSample, dump_json
 
 IPFS_GATEWAYS = (
     "https://ipfs.io/ipfs/",
@@ -102,11 +102,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     selected = [collection for collection in COLLECTIONS if not args.collections or collection.slug in args.collections]
-    manifest_payload: dict[str, object] = {
-        "version": 1,
-        "generatedAt": None,
-        "collections": [],
-    }
+    manifest_collections: list[CollectionManifestCollection] = []
 
     with httpx.Client(
         follow_redirects=True,
@@ -132,43 +128,45 @@ def main() -> None:
             successful_results = sorted((result for result in results if result.success), key=lambda result: result.token_id)
             failed_results = sorted((result for result in results if not result.success), key=lambda result: result.token_id)
 
-            manifest_payload["collections"].append(
-                {
-                "slug": collection.slug,
-                "name": collection.name,
-                "contract": collection.contract,
-                "totalSupply": collection.total_supply,
-                "targetCount": collection.target_count,
-                "source": collection.slug,
-                "labelSource": COLLECTION_LABEL_SOURCE,
-                "sampleCount": len(token_ids),
-                "downloadedCount": len(successful_results),
-                "failedCount": len(failed_results),
-                "samples": [
-                    {
-                        "tokenId": result.token_id,
-                        "localPath": result.local_path,
-                        "imageUrl": result.image_url,
-                        "metadataUrl": result.metadata_url,
-                    }
-                    for result in successful_results
-                ],
-                "failures": [
-                    {
-                        "tokenId": result.token_id,
-                        "error": result.error,
-                    }
-                    for result in failed_results
-                ],
-            }
+            manifest_collections.append(
+                CollectionManifestCollection(
+                    slug=collection.slug,
+                    name=collection.name,
+                    contract=collection.contract,
+                    total_supply=collection.total_supply,
+                    target_count=collection.target_count,
+                    sample_count=len(token_ids),
+                    downloaded_count=len(successful_results),
+                    failed_count=len(failed_results),
+                    samples=[
+                        CollectionSample(
+                            token_id=result.token_id,
+                            local_path=str(result.local_path),
+                            image_url=result.image_url,
+                            metadata_url=result.metadata_url,
+                        )
+                        for result in successful_results
+                    ],
+                    failures=[
+                        CollectionFailure(
+                            token_id=result.token_id,
+                            error=str(result.error),
+                        )
+                        for result in failed_results
+                    ],
+                )
             )
             print(
                 f"{collection.slug}: downloaded {len(successful_results)}/{len(token_ids)} "
                 f"(target {min(collection.target_count, collection.total_supply)}, failed {len(failed_results)})"
             )
 
-    manifest_payload["generatedAt"] = datetime.now(UTC).isoformat()
-    write_json_file(COLLECTION_MANIFEST_PATH, manifest_payload)
+    manifest_payload = CollectionManifest(
+        version=1,
+        generated_at=datetime.now(UTC).isoformat(),
+        collections=manifest_collections,
+    )
+    dump_json(COLLECTION_MANIFEST_PATH, manifest_payload)
     print(f"Wrote collection manifest to {COLLECTION_MANIFEST_PATH}")
 
 

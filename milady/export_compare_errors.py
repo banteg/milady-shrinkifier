@@ -5,7 +5,8 @@ import os
 import shutil
 from pathlib import Path
 
-from .pipeline_common import MODEL_COMPARE_ROOT, read_json_file
+from .pipeline_common import MODEL_COMPARE_ROOT
+from .wire import CompareErrorItem, CompareSummary, dump_json, load_json
 
 
 def parse_args() -> argparse.Namespace:
@@ -42,8 +43,8 @@ def main() -> None:
     if not summary_path.exists():
         raise SystemExit(f"Compare summary not found: {summary_path}")
 
-    summary = read_json_file(summary_path)
-    runs = summary["runs"]
+    summary = load_json(summary_path, CompareSummary)
+    runs = summary.runs
 
     selected_run_ids = [run_id for run_id in runs.keys() if not args.run_ids or run_id in args.run_ids]
     if not selected_run_ids:
@@ -55,8 +56,8 @@ def main() -> None:
     exported = 0
     for run_id in selected_run_ids:
         run_summary = runs[run_id]
-        false_positive_path = Path(str(run_summary["falsePositivesPath"]))
-        false_negative_path = Path(str(run_summary["falseNegativesPath"]))
+        false_positive_path = Path(run_summary.false_positives_path)
+        false_negative_path = Path(run_summary.false_negatives_path)
         exported += export_error_set(run_id, "false_positives", false_positive_path, output_dir, args.mode)
         exported += export_error_set(run_id, "false_negatives", false_negative_path, output_dir, args.mode)
 
@@ -83,19 +84,19 @@ def export_error_set(
     output_dir: Path,
     mode: str,
 ) -> int:
-    items = read_json_file(manifest_path)
+    items = load_json(manifest_path, list[CompareErrorItem])
 
     category_dir = output_dir / run_id / category
     category_dir.mkdir(parents=True, exist_ok=True)
-    (category_dir / "manifest.json").write_text(manifest_path.read_text())
+    dump_json(category_dir / "manifest.json", items)
 
     exported = 0
     for index, item in enumerate(items, start=1):
-        source_path = Path(str(item["path"]))
+        source_path = Path(item.path)
         if not source_path.exists():
             raise SystemExit(f"Missing compare source image: {source_path}")
-        probability = float(item["probability"])
-        sample_id = str(item["id"]).replace(":", "__")
+        probability = item.probability
+        sample_id = item.id.replace(":", "__")
         target_name = f"{index:03d}__p{probability:.3f}__{sample_id}{source_path.suffix.lower()}"
         target_path = category_dir / target_name
         materialize_file(source_path, target_path, mode)

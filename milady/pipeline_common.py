@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import mimetypes
 import os
 import sqlite3
@@ -13,7 +12,16 @@ from typing import Any
 
 import numpy as np
 import imagehash
+import msgspec
 from PIL import Image
+
+from .wire import (
+    ReviewItemPayload,
+    RunSummary,
+    decode_string_list,
+    encode_string_list,
+    load_json,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CACHE_ROOT = PROJECT_ROOT / "cache"
@@ -74,33 +82,33 @@ class ReviewItem:
     last_seen_at: str | None
     image_url_count: int
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "sha256": self.sha256,
-            "label": self.label,
-            "labelSource": self.label_source,
-            "localPath": self.local_path,
-            "byteSize": self.byte_size,
-            "width": self.width,
-            "height": self.height,
-            "handles": self.handles,
-            "displayNames": self.display_names,
-            "sourceSurfaces": self.source_surfaces,
-            "seenCount": self.seen_count,
-            "whitelisted": self.whitelisted,
-            "maxModelScore": self.max_model_score,
-            "latestModelPredictedLabel": self.latest_model_predicted_label,
-            "latestModelRunId": self.latest_model_run_id,
-            "latestModelThreshold": self.latest_model_threshold,
-            "latestModelDistanceToThreshold": self.latest_model_distance_to_threshold,
-            "disagreementFlags": self.disagreement_flags,
-            "labeledAt": self.labeled_at,
-            "exampleProfileUrl": self.example_profile_url,
-            "exampleNotificationUrl": self.example_notification_url,
-            "exampleTweetUrl": self.example_tweet_url,
-            "lastSeenAt": self.last_seen_at,
-            "imageUrlCount": self.image_url_count,
-        }
+    def to_payload(self) -> ReviewItemPayload:
+        return ReviewItemPayload(
+            sha256=self.sha256,
+            label=self.label,
+            label_source=self.label_source,
+            local_path=self.local_path,
+            byte_size=self.byte_size,
+            width=self.width,
+            height=self.height,
+            handles=self.handles,
+            display_names=self.display_names,
+            source_surfaces=self.source_surfaces,
+            seen_count=self.seen_count,
+            whitelisted=self.whitelisted,
+            max_model_score=self.max_model_score,
+            latest_model_predicted_label=self.latest_model_predicted_label,
+            latest_model_run_id=self.latest_model_run_id,
+            latest_model_threshold=self.latest_model_threshold,
+            latest_model_distance_to_threshold=self.latest_model_distance_to_threshold,
+            disagreement_flags=self.disagreement_flags,
+            labeled_at=self.labeled_at,
+            example_profile_url=self.example_profile_url,
+            example_notification_url=self.example_notification_url,
+            example_tweet_url=self.example_tweet_url,
+            last_seen_at=self.last_seen_at,
+            image_url_count=self.image_url_count,
+        )
 
 
 @dataclass(slots=True)
@@ -282,15 +290,6 @@ def ensure_column(connection: sqlite3.Connection, table_name: str, column_name: 
     connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}")
 
 
-def read_json_file(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text())
-
-
-def write_json_file(path: Path, payload: dict[str, Any] | list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True))
-
-
 def resolve_repo_path(path: str | Path) -> Path:
     candidate = Path(path)
     if candidate.is_absolute():
@@ -299,16 +298,11 @@ def resolve_repo_path(path: str | Path) -> Path:
 
 
 def parse_json_list(value: str | None) -> list[str]:
-    if not value:
-        return []
-    parsed = json.loads(value)
-    if not isinstance(parsed, list):
-        return []
-    return [entry for entry in parsed if isinstance(entry, str)]
+    return decode_string_list(value)
 
 
 def encode_json_list(values: list[str]) -> str:
-    return json.dumps(sorted(set(values)))
+    return encode_string_list(values)
 
 
 def merge_string_lists(left: list[str], right: list[str]) -> list[str]:
@@ -730,11 +724,9 @@ def load_model_thresholds(run_ids: set[str]) -> dict[str, float]:
         if not summary_path.exists():
             continue
         try:
-            payload = json.loads(summary_path.read_text())
-            threshold = payload.get("threshold")
-            if threshold is not None:
-                thresholds[run_id] = float(threshold)
-        except (OSError, ValueError, TypeError):
+            payload = load_json(summary_path, RunSummary)
+            thresholds[run_id] = float(payload.threshold)
+        except (OSError, msgspec.DecodeError, TypeError, ValueError):
             continue
     return thresholds
 

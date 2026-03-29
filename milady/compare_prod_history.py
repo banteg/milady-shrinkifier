@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import argparse
-import json
 from datetime import UTC, datetime
 from pathlib import Path
 
 from .compare_runs import run_compare
 from .pipeline_common import MODEL_COMPARE_ROOT, MODEL_RUN_ROOT
+from .wire import CompareSummary, dump_json, encode_json
 
 PROD_RELEASES: list[tuple[str, str]] = [
     ("v0.2.2", "20260327T142224Z"),
@@ -48,9 +48,9 @@ def main() -> None:
         force_cpu=args.cpu,
         output_dir=output_dir,
     )
-    results["releases"] = {version: run_id for version, run_id in releases}
-    summary_output.write_text(json.dumps(results, indent=2, sort_keys=True))
-    print(json.dumps({"releases": results["releases"]}, indent=2, sort_keys=True))
+    results.releases = {version: run_id for version, run_id in releases}
+    dump_json(summary_output, results)
+    print(encode_json({"releases": results.releases}, pretty=True).decode("utf-8"))
 
 
 def default_output_dir(eval_set: str) -> Path:

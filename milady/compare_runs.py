@@ -1,14 +1,26 @@
 from __future__ import annotations
 
 import argparse
-import json
 from datetime import UTC, datetime
 from pathlib import Path
 
 import torch
 
 from .mobilenet_common import DatasetEntry, compute_metrics, create_model, load_dataset_entries, probabilities_from_model
-from .pipeline_common import MODEL_COMPARE_ROOT, MODEL_RUN_ROOT, SPLIT_MANIFEST_PATH, SPLIT_ROOT, connect_offline_cache_db, ensure_layout, read_json_file
+from .pipeline_common import MODEL_COMPARE_ROOT, MODEL_RUN_ROOT, SPLIT_MANIFEST_PATH, SPLIT_ROOT, connect_offline_cache_db, ensure_layout
+from .wire import (
+    CompareErrorItem,
+    CompareRunSummary,
+    CompareSummary,
+    CompareSummaryEvaluationPolicy,
+    DiagnosticBucket,
+    MetricSummary,
+    RunSummary,
+    SplitManifest,
+    dump_json,
+    encode_json,
+    load_json,
+)
 
 HEADLINE_EVAL_POLICY = "manual_export_gold_plus_collection_positive_holdout"
 ALL_MANUAL_EVAL_POLICY = "all_manual_export_labels"
@@ -69,17 +81,7 @@ def run_compare(
         )
         print(f"[compare] output_dir={resolved_output_dir}", flush=True)
 
-        results: dict[str, object] = {
-            "generatedAt": datetime.now(UTC).isoformat(),
-            "device": device.type,
-            "valSize": len(val_entries),
-            "testSize": len(test_entries),
-            "evaluationPolicy": {
-                "headline": evaluation_policy,
-            },
-            "runIds": run_ids,
-            "runs": {},
-        }
+        result_runs: dict[str, CompareRunSummary] = {}
 
         for run_id in run_ids:
             summary_path = MODEL_RUN_ROOT / run_id / "summary.json"
@@ -88,8 +90,8 @@ def run_compare(
                 raise SystemExit(f"Missing summary or checkpoint for run {run_id}")
             print(f"[compare:{run_id}] loading checkpoint", flush=True)
 
-            summary = json.loads(summary_path.read_text())
-            precision_floor = float(summary["precisionFloor"])
+            summary = load_json(summary_path, RunSummary)
+            precision_floor = float(summary.precision_floor)
 
             model = create_model(pretrained=False).to(device)
             state = torch.load(checkpoint_path, map_location=device)
@@ -112,30 +114,39 @@ def run_compare(
 
             false_positives_path = resolved_output_dir / f"{run_id}.false_positives.json"
             false_negatives_path = resolved_output_dir / f"{run_id}.false_negatives.json"
-            false_positives_path.write_text(json.dumps(false_positives, indent=2, sort_keys=True))
-            false_negatives_path.write_text(json.dumps(false_negatives, indent=2, sort_keys=True))
+            dump_json(false_positives_path, false_positives)
+            dump_json(false_negatives_path, false_negatives)
             print(
                 f"[compare:{run_id}] test done precision={test_metrics['precision']:.4f} "
                 f"recall={test_metrics['recall']:.4f} fp={len(false_positives)} fn={len(false_negatives)}",
                 flush=True,
             )
 
-            results["runs"][run_id] = {
-                "threshold": threshold,
-                "precisionFloor": precision_floor,
-                "valMetrics": val_metrics,
-                "testMetrics": test_metrics,
-                "valDiagnosticsBySource": diagnostic_metrics_by(val_entries, val_probabilities, threshold),
-                "testDiagnosticsBySource": diagnostic_metrics_by(test_entries, test_probabilities, threshold),
-                "falsePositiveCount": len(false_positives),
-                "falseNegativeCount": len(false_negatives),
-                "falsePositivesPath": str(false_positives_path),
-                "falseNegativesPath": str(false_negatives_path),
-            }
+            result_runs[run_id] = CompareRunSummary(
+                threshold=threshold,
+                precision_floor=precision_floor,
+                val_metrics=metric_summary_from_dict(val_metrics),
+                test_metrics=metric_summary_from_dict(test_metrics),
+                val_diagnostics_by_source=diagnostic_metrics_by(val_entries, val_probabilities, threshold),
+                test_diagnostics_by_source=diagnostic_metrics_by(test_entries, test_probabilities, threshold),
+                false_positive_count=len(false_positives),
+                false_negative_count=len(false_negatives),
+                false_positives_path=str(false_positives_path),
+                false_negatives_path=str(false_negatives_path),
+            )
 
+        results = CompareSummary(
+            generated_at=datetime.now(UTC).isoformat(),
+            device=device.type,
+            val_size=len(val_entries),
+            test_size=len(test_entries),
+            evaluation_policy=CompareSummaryEvaluationPolicy(headline=evaluation_policy),
+            run_ids=run_ids,
+            runs=result_runs,
+        )
         summary_output = resolved_output_dir / "summary.json"
-        summary_output.write_text(json.dumps(results, indent=2, sort_keys=True))
-        print(json.dumps(results, indent=2, sort_keys=True))
+        dump_json(summary_output, results)
+        print(encode_json(results, pretty=True).decode("utf-8"))
         print(f"[saved] {summary_output}")
         return results, summary_output
     finally:
@@ -180,29 +191,29 @@ def load_all_manual_export_entries() -> list:
 def load_all_exported_entries(allowed_label_sources: set[str] | None = None) -> list:
     if not SPLIT_MANIFEST_PATH.exists():
         raise SystemExit("Missing split manifest. Run `uv run milady build-dataset` first.")
-    manifest = read_json_file(SPLIT_MANIFEST_PATH)
-    groups = manifest["groups"]
+    manifest = load_json(SPLIT_MANIFEST_PATH, SplitManifest)
+    groups = manifest.groups
     entries = []
     for group in groups:
-        canonical = group["canonical"]
-        if canonical["source"] != "export":
+        canonical = group.canonical
+        if canonical.source != "export":
             continue
-        label_source = str(canonical["labelSource"])
+        label_source = canonical.label_source
         if allowed_label_sources is not None and label_source not in allowed_label_sources:
             continue
-        label = str(group["label"])
+        label = group.label
         if label not in ("milady", "not_milady"):
             continue
         entries.append(
             DatasetEntry(
-                sample_id=str(canonical["id"]),
-                path=Path(str(canonical["path"])),
+                sample_id=canonical.id,
+                path=Path(canonical.path),
                 label=label,
                 source="export",
                 split="all-exported",
                 label_source=label_source,
-                label_tier=str(canonical["labelTier"]),
-                sample_weight=float(canonical["sampleWeight"]),
+                label_tier=canonical.label_tier,
+                sample_weight=canonical.sample_weight,
             )
         )
     return entries
@@ -251,38 +262,38 @@ def collect_errors(
     want_predicted: int,
     want_label: int,
 ) -> list[dict[str, object]]:
-    items: list[dict[str, object]] = []
+    items: list[CompareErrorItem] = []
     for entry, probability, label in zip(entries, probabilities, labels, strict=True):
         predicted = 1 if probability >= threshold else 0
         if predicted != want_predicted or label != want_label:
             continue
         items.append(
-            {
-                "id": entry.sample_id,
-                "path": str(entry.path),
-                "label": entry.label,
-                "source": entry.source,
-                "labelSource": entry.label_source,
-                "labelTier": entry.label_tier,
-                "split": entry.split,
-                "probability": probability,
-                "threshold": threshold,
-                "predictedLabel": "milady" if predicted == 1 else "not_milady",
-            }
+            CompareErrorItem(
+                id=entry.sample_id,
+                path=str(entry.path),
+                label=entry.label,
+                source=entry.source,
+                label_source=entry.label_source,
+                label_tier=entry.label_tier,
+                split=entry.split,
+                probability=probability,
+                threshold=threshold,
+                predicted_label="milady" if predicted == 1 else "not_milady",
+            )
         )
     return items
 
 
-def diagnostic_metrics_by(entries, probabilities: list[float], threshold: float) -> dict[str, dict[str, dict[str, float] | int | str]]:
-    diagnostics: dict[str, dict[str, dict[str, float] | int | str]] = {}
+def diagnostic_metrics_by(entries, probabilities: list[float], threshold: float) -> dict[str, dict[str, DiagnosticBucket]]:
+    diagnostics: dict[str, dict[str, DiagnosticBucket]] = {}
     group_fields = {
         "source": "source",
-        "labelSource": "label_source",
-        "labelTier": "label_tier",
+        "label_source": "label_source",
+        "label_tier": "label_tier",
     }
     for group_name, field_name in group_fields.items():
         values = sorted({str(getattr(entry, field_name)) for entry in entries})
-        grouped_metrics: dict[str, dict[str, float] | int | str] = {}
+        grouped_metrics: dict[str, DiagnosticBucket] = {}
         for value in values:
             indices = [
                 index
@@ -291,12 +302,31 @@ def diagnostic_metrics_by(entries, probabilities: list[float], threshold: float)
             ]
             if not indices:
                 continue
-            grouped_metrics[value] = {
-                "count": len(indices),
-                "metrics": compute_metrics([probabilities[index] for index in indices], [1 if entries[index].label == "milady" else 0 for index in indices], threshold),
-            }
+            grouped_metrics[value] = DiagnosticBucket(
+                count=len(indices),
+                metrics=metric_summary_from_dict(
+                    compute_metrics(
+                        [probabilities[index] for index in indices],
+                        [1 if entries[index].label == "milady" else 0 for index in indices],
+                        threshold,
+                    )
+                ),
+            )
         diagnostics[group_name] = grouped_metrics
     return diagnostics
+
+
+def metric_summary_from_dict(metrics: dict[str, float]) -> MetricSummary:
+    return MetricSummary(
+        accuracy=metrics["accuracy"],
+        precision=metrics["precision"],
+        recall=metrics["recall"],
+        f1=metrics["f1"],
+        true_positive=metrics["truePositive"],
+        false_positive=metrics["falsePositive"],
+        true_negative=metrics["trueNegative"],
+        false_negative=metrics["falseNegative"],
+    )
 
 
 if __name__ == "__main__":

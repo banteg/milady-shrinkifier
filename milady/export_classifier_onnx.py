@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -9,7 +8,8 @@ import onnx
 import torch
 
 from .mobilenet_common import CLASS_NAMES, ExportWrapper, MODEL_IMAGE_SIZE, MODEL_MEAN, MODEL_STD, POSITIVE_INDEX, create_model
-from .pipeline_common import MODEL_RUN_ROOT, PUBLIC_METADATA_PATH, PUBLIC_MODEL_PATH, write_json_file
+from .pipeline_common import MODEL_RUN_ROOT, PUBLIC_METADATA_PATH, PUBLIC_MODEL_PATH
+from .wire import PublicModelMetadata, RunSummary, dump_json, encode_json, load_json
 
 
 def parse_args() -> argparse.Namespace:
@@ -31,8 +31,8 @@ def main() -> None:
     if not summary_path.exists():
         raise SystemExit(f"Training summary not found: {summary_path}")
 
-    summary = json.loads(summary_path.read_text())
-    threshold = float(args.threshold if args.threshold is not None else summary["threshold"])
+    summary = load_json(summary_path, RunSummary)
+    threshold = float(args.threshold if args.threshold is not None else summary.threshold)
 
     model = create_model(pretrained=False)
     state_dict = torch.load(checkpoint_path, map_location="cpu")
@@ -61,20 +61,29 @@ def main() -> None:
         stale_external_data.unlink()
     onnx.checker.check_model(str(PUBLIC_MODEL_PATH))
 
-    metadata = {
-        "architecture": "mobilenet_v3_small",
-        "generatedAt": datetime.now(UTC).isoformat(),
-        "inputSize": MODEL_IMAGE_SIZE,
-        "channels": 3,
-        "classNames": CLASS_NAMES,
-        "mean": MODEL_MEAN,
-        "std": MODEL_STD,
-        "threshold": threshold,
-        "positiveIndex": POSITIVE_INDEX,
-        "runId": args.run_id,
-    }
-    write_json_file(PUBLIC_METADATA_PATH, metadata)
-    print(json.dumps({"modelPath": str(PUBLIC_MODEL_PATH), "metadataPath": str(PUBLIC_METADATA_PATH), "threshold": threshold}, indent=2))
+    metadata = PublicModelMetadata(
+        architecture="mobilenet_v3_small",
+        generated_at=datetime.now(UTC).isoformat(),
+        input_size=MODEL_IMAGE_SIZE,
+        channels=3,
+        class_names=CLASS_NAMES,
+        mean=MODEL_MEAN,
+        std=MODEL_STD,
+        threshold=threshold,
+        positive_index=POSITIVE_INDEX,
+        run_id=args.run_id,
+    )
+    dump_json(PUBLIC_METADATA_PATH, metadata)
+    print(
+        encode_json(
+            {
+                "model_path": str(PUBLIC_MODEL_PATH),
+                "metadata_path": str(PUBLIC_METADATA_PATH),
+                "threshold": threshold,
+            },
+            pretty=True,
+        ).decode("utf-8")
+    )
 
 
 if __name__ == "__main__":

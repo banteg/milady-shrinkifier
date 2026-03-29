@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import re
 from io import BytesIO
 from pathlib import Path
@@ -12,6 +11,7 @@ from PIL import Image
 
 from .mobilenet_common import INFERENCE_CROP_VARIANTS, create_model, load_image_variants_for_inference, score_logits_to_probabilities
 from .pipeline_common import MODEL_RUN_ROOT, convert_image_to_rgb
+from .wire import RunSummary, encode_json, load_json
 
 
 def parse_args() -> argparse.Namespace:
@@ -37,8 +37,8 @@ def main() -> None:
     if not summary_path.exists():
         raise SystemExit(f"Training summary not found: {summary_path}")
 
-    summary = json.loads(summary_path.read_text())
-    threshold = float(args.threshold if args.threshold is not None else summary["threshold"])
+    summary = load_json(summary_path, RunSummary)
+    threshold = float(args.threshold if args.threshold is not None else summary.threshold)
 
     model = create_model(pretrained=False)
     model.load_state_dict(torch.load(checkpoint_path, map_location="cpu"))
@@ -46,31 +46,30 @@ def main() -> None:
 
     output: dict[str, object] = {
         "input": args.input,
-        "runId": run_id,
+        "run_id": run_id,
         "threshold": threshold,
     }
     local_path = Path(args.input).expanduser()
     if local_path.exists() and local_path.is_file():
         probability = infer_probability(model, local_path.read_bytes())
-        output["localPath"] = str(local_path.resolve())
+        output["local_path"] = str(local_path.resolve())
     else:
         normalized_url = normalize_profile_image_url(args.input)
         response = httpx.get(normalized_url, timeout=args.timeout, follow_redirects=True)
         response.raise_for_status()
         probability = infer_probability(model, response.content)
         output["url"] = args.input
-        output["normalizedUrl"] = normalized_url
+        output["normalized_url"] = normalized_url
 
     print(
-        json.dumps(
+        encode_json(
             {
                 **output,
                 "probability": probability,
                 "matched": probability >= threshold,
             },
-            indent=2,
-            sort_keys=True,
-        )
+            pretty=True,
+        ).decode("utf-8")
     )
 
 

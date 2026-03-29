@@ -26,16 +26,16 @@ const DEFAULT_RUNTIME_MODEL_CONFIG: RuntimeModelConfig = {
 };
 
 export function resolveRuntimeModelConfig(metadata: ModelMetadata): RuntimeModelConfig {
-  const inputSize = Number.isInteger(metadata.inputSize) && metadata.inputSize! > 0
-    ? metadata.inputSize!
+  const inputSize = Number.isInteger(metadata.input_size) && metadata.input_size! > 0
+    ? metadata.input_size!
     : DEFAULT_RUNTIME_MODEL_CONFIG.inputSize;
   const channels = Number.isInteger(metadata.channels) && metadata.channels! > 0
     ? metadata.channels!
     : DEFAULT_RUNTIME_MODEL_CONFIG.channels;
   const mean = isTriple(metadata.mean) ? metadata.mean : DEFAULT_RUNTIME_MODEL_CONFIG.mean;
   const std = isTriple(metadata.std) ? metadata.std : DEFAULT_RUNTIME_MODEL_CONFIG.std;
-  const positiveIndex = Number.isInteger(metadata.positiveIndex) && metadata.positiveIndex! >= 0
-    ? metadata.positiveIndex!
+  const positiveIndex = Number.isInteger(metadata.positive_index) && metadata.positive_index! >= 0
+    ? metadata.positive_index!
     : DEFAULT_RUNTIME_MODEL_CONFIG.positiveIndex;
   return {
     inputSize,

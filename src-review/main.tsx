@@ -21,33 +21,33 @@ type LabeledGridFilter = "all" | ReviewLabel;
 interface ReviewItem {
   sha256: string;
   label: ReviewLabel | null;
-  labelSource: string | null;
-  localPath: string;
+  label_source: string | null;
+  local_path: string;
   handles: string[];
-  displayNames: string[];
-  sourceSurfaces: string[];
-  seenCount: number;
+  display_names: string[];
+  source_surfaces: string[];
+  seen_count: number;
   whitelisted: boolean;
-  maxModelScore: number | null;
-  latestModelPredictedLabel: ReviewLabel | null;
-  latestModelRunId: string | null;
-  latestModelThreshold: number | null;
-  latestModelDistanceToThreshold: number | null;
-  disagreementFlags: string[];
-  labeledAt: string | null;
-  exampleProfileUrl: string | null;
-  exampleNotificationUrl: string | null;
-  exampleTweetUrl: string | null;
-  lastSeenAt: string | null;
+  max_model_score: number | null;
+  latest_model_predicted_label: ReviewLabel | null;
+  latest_model_run_id: string | null;
+  latest_model_threshold: number | null;
+  latest_model_distance_to_threshold: number | null;
+  disagreement_flags: string[];
+  labeled_at: string | null;
+  example_profile_url: string | null;
+  example_notification_url: string | null;
+  example_tweet_url: string | null;
+  last_seen_at: string | null;
 }
 
 interface SummaryPayload {
-  selectedRunId: string | null;
-  availableRunIds: string[];
-  totalImages: number;
-  queueCounts: Record<QueueName, number>;
-  needsReview: number;
-  canUndo: boolean;
+  selected_run_id: string | null;
+  available_run_ids: string[];
+  total_images: number;
+  queue_counts: Record<QueueName, number>;
+  needs_review: number;
+  can_undo: boolean;
 }
 
 interface QueuePayload {
@@ -69,11 +69,11 @@ interface ItemPayload {
 }
 
 interface HistoryEntry {
-  eventId: number;
+  event_id: number;
   sha256: string;
-  createdAt: string;
-  newLabel: ReviewLabel;
-  previousLabel: ReviewLabel | null;
+  created_at: string;
+  new_label: ReviewLabel;
+  previous_label: ReviewLabel | null;
   item: ReviewItem | null;
 }
 
@@ -217,10 +217,10 @@ function formatScore(value: number | null): string {
 }
 
 function scoreBadgeText(item: ReviewItem): string | null {
-  if (item.maxModelScore == null || Number.isNaN(item.maxModelScore)) {
+  if (item.max_model_score == null || Number.isNaN(item.max_model_score)) {
     return null;
   }
-  return `p ${formatScore(item.maxModelScore)}`;
+  return `p ${formatScore(item.max_model_score)}`;
 }
 
 function scoreBarPercent(value: number | null): number | null {
@@ -240,29 +240,29 @@ function initialBatchLabel(item: ReviewItem): ReviewLabel {
   if (item.label) {
     return item.label;
   }
-  if (item.latestModelPredictedLabel) {
-    return item.latestModelPredictedLabel;
+  if (item.latest_model_predicted_label) {
+    return item.latest_model_predicted_label;
   }
   return "not_milady";
 }
 
 function renderStatusPills(item: ReviewItem) {
   const pills = [];
-  if (item.latestModelPredictedLabel) {
+  if (item.latest_model_predicted_label) {
     pills.push({
-      text: `model ${item.latestModelPredictedLabel} ${formatScore(item.maxModelScore)}`,
-      tone: item.latestModelPredictedLabel === "milady" ? "warn" : "good",
+      text: `model ${item.latest_model_predicted_label} ${formatScore(item.max_model_score)}`,
+      tone: item.latest_model_predicted_label === "milady" ? "warn" : "good",
     });
   } else {
     pills.push({ text: "model unscored", tone: "" });
   }
   if (item.label) {
     pills.push({
-      text: `${item.labelSource ?? "n/a"} ${item.label}`,
+      text: `${item.label_source ?? "n/a"} ${item.label}`,
       tone: item.label === "not_milady" ? "good" : "warn",
     });
   }
-  for (const flag of item.disagreementFlags) {
+  for (const flag of item.disagreement_flags) {
     pills.push({ text: flag.replaceAll("_", " "), tone: "bad" });
   }
   return pills;
@@ -272,38 +272,38 @@ function metadataRows(item: ReviewItem): Array<{ label: string; value: string | 
   return [
     { label: "sha256", value: item.sha256 },
     { label: "label", value: item.label ?? "unlabeled" },
-    { label: "label source", value: item.labelSource ?? "n/a" },
-    { label: "labeled at", value: item.labeledAt ?? "n/a" },
+    { label: "label source", value: item.label_source ?? "n/a" },
+    { label: "labeled at", value: item.labeled_at ?? "n/a" },
     { label: "handles", value: item.handles.join(", ") || "none" },
-    { label: "display names", value: item.displayNames.join(", ") || "none" },
-    { label: "seen count", value: String(item.seenCount) },
-    { label: "source surfaces", value: item.sourceSurfaces.join(", ") || "none" },
+    { label: "display names", value: item.display_names.join(", ") || "none" },
+    { label: "seen count", value: String(item.seen_count) },
+    { label: "source surfaces", value: item.source_surfaces.join(", ") || "none" },
     {
       label: "model",
-      value: item.latestModelPredictedLabel
-        ? `${item.latestModelPredictedLabel} (${formatScore(item.maxModelScore)})`
+      value: item.latest_model_predicted_label
+        ? `${item.latest_model_predicted_label} (${formatScore(item.max_model_score)})`
         : "unscored",
     },
     {
       label: "threshold",
       value:
-        item.latestModelThreshold != null
-          ? `${formatScore(item.latestModelThreshold)} (Δ ${formatScore(item.latestModelDistanceToThreshold)})`
+        item.latest_model_threshold != null
+          ? `${formatScore(item.latest_model_threshold)} (Δ ${formatScore(item.latest_model_distance_to_threshold)})`
           : "n/a",
     },
-    { label: "model run", value: item.latestModelRunId ?? "n/a" },
+    { label: "model run", value: item.latest_model_run_id ?? "n/a" },
     { label: "whitelisted", value: item.whitelisted ? "yes" : "no" },
     {
       label: "profile",
-      value: item.exampleProfileUrl ? { href: item.exampleProfileUrl, text: item.exampleProfileUrl } : "n/a",
+      value: item.example_profile_url ? { href: item.example_profile_url, text: item.example_profile_url } : "n/a",
     },
     {
       label: "tweet",
-      value: item.exampleTweetUrl ? { href: item.exampleTweetUrl, text: item.exampleTweetUrl } : "n/a",
+      value: item.example_tweet_url ? { href: item.example_tweet_url, text: item.example_tweet_url } : "n/a",
     },
     {
       label: "notification",
-      value: item.exampleNotificationUrl ? { href: item.exampleNotificationUrl, text: item.exampleNotificationUrl } : "n/a",
+      value: item.example_notification_url ? { href: item.example_notification_url, text: item.example_notification_url } : "n/a",
     },
   ];
 }
@@ -334,24 +334,24 @@ function App() {
     if (!summary) {
       return;
     }
-    if (selectedRunId() !== summary.selectedRunId) {
-      setSelectedRunId(summary.selectedRunId);
+    if (selectedRunId() !== summary.selected_run_id) {
+      setSelectedRunId(summary.selected_run_id);
     }
 
-    const preferredQueue = preferredQueueOrder.find((candidate) => (summary.queueCounts[candidate] ?? 0) > 0) ?? "needs_review";
+    const preferredQueue = preferredQueueOrder.find((candidate) => (summary.queue_counts[candidate] ?? 0) > 0) ?? "needs_review";
 
-    if (!(queue() in summary.queueCounts)) {
+    if (!(queue() in summary.queue_counts)) {
       setQueue(preferredQueue);
       setIndex(0);
-    } else if (queue() === "needs_review" && preferredQueue !== "needs_review" && (summary.queueCounts.needs_review ?? 0) === 0) {
+    } else if (queue() === "needs_review" && preferredQueue !== "needs_review" && (summary.queue_counts.needs_review ?? 0) === 0) {
       setQueue(preferredQueue);
       setIndex(0);
     }
 
     if (gridSource() === "queue") {
-      if (!(gridFilter() in summary.queueCounts)) {
+      if (!(gridFilter() in summary.queue_counts)) {
         setGridFilter(queue());
-      } else if (gridFilter() === "needs_review" && preferredQueue !== "needs_review" && (summary.queueCounts.needs_review ?? 0) === 0) {
+      } else if (gridFilter() === "needs_review" && preferredQueue !== "needs_review" && (summary.queue_counts.needs_review ?? 0) === 0) {
         setGridFilter(preferredQueue);
       }
     } else if (!(gridFilter() in labeledGridLabels)) {
@@ -390,12 +390,12 @@ function App() {
 
   const activeQueueCount = createMemo(() => {
     if (activeView() === "batch") {
-      return batchQuery.data?.total ?? summaryQuery.data?.queueCounts[queue()] ?? 0;
+      return batchQuery.data?.total ?? summaryQuery.data?.queue_counts[queue()] ?? 0;
     }
     if (selectedSha() === null) {
-      return queueQuery.data?.total ?? summaryQuery.data?.queueCounts[queue()] ?? 0;
+      return queueQuery.data?.total ?? summaryQuery.data?.queue_counts[queue()] ?? 0;
     }
-    return summaryQuery.data?.queueCounts[queue()] ?? 0;
+    return summaryQuery.data?.queue_counts[queue()] ?? 0;
   });
 
   const summaryCopy = createMemo(() => {
@@ -405,9 +405,9 @@ function App() {
     }
     const queueCount = activeQueueCount();
     if (queue() === "needs_review") {
-      return `${summary.totalImages} images, ${queueCount} need review, run ${summary.selectedRunId ?? "unscored"}`;
+      return `${summary.total_images} images, ${queueCount} need review, run ${summary.selected_run_id ?? "unscored"}`;
     }
-    return `${summary.totalImages} images, ${queueCount} in ${queueLabels[queue()].toLowerCase()}, ${summary.needsReview} need review overall, run ${summary.selectedRunId ?? "unscored"}`;
+    return `${summary.total_images} images, ${queueCount} in ${queueLabels[queue()].toLowerCase()}, ${summary.needs_review} need review overall, run ${summary.selected_run_id ?? "unscored"}`;
   });
 
   const currentHeading = createMemo(() => {
@@ -556,11 +556,11 @@ function App() {
 
   const batchMutation = createMutation(() => ({
     mutationFn: (payload: { items: Array<{ sha256: string; label: ReviewLabel }> }) =>
-      postJson<{ ok: true; batchId: string; count: number }>("/api/batch-label", payload),
+      postJson<{ ok: true; batch_id: string; count: number }>("/api/batch-label", payload),
   }));
 
   const undoMutation = createMutation(() => ({
-    mutationFn: () => postJson<{ undoneSha256: string | null }>("/api/undo"),
+    mutationFn: () => postJson<{ undone_sha256: string | null }>("/api/undo"),
   }));
 
   async function handleLabel(label: ReviewLabel) {
@@ -624,7 +624,7 @@ function App() {
   async function handleUndo() {
     const wasQueueItem = selectedSha() === null;
     const payload = await undoMutation.mutateAsync();
-    setSelectedSha(payload.undoneSha256 ?? null);
+    setSelectedSha(payload.undone_sha256 ?? null);
     if (wasQueueItem) {
       setIndex((value) => Math.max(0, value - 1));
     }
@@ -743,7 +743,7 @@ function App() {
             >
               <Show when={summaryQuery.data} fallback={<option>Loading…</option>}>
                 {(summary) => (
-                  <For each={summary().availableRunIds}>
+                  <For each={summary().available_run_ids}>
                     {(runId) => <option value={runId}>{runId}</option>}
                   </For>
                 )}
@@ -771,7 +771,7 @@ function App() {
                       <optgroup label={group.label}>
                         <For each={group.queues}>
                           {(queueName) => (
-                            <option value={queueName}>{`${queueLabels[queueName]} (${summary().queueCounts[queueName] ?? 0})`}</option>
+                            <option value={queueName}>{`${queueLabels[queueName]} (${summary().queue_counts[queueName] ?? 0})`}</option>
                           )}
                         </For>
                       </optgroup>
@@ -783,7 +783,7 @@ function App() {
           </label>
           <p class="summary-copy">{summaryCopy()}</p>
           <div class="actions">
-            <button type="button" disabled={!summaryQuery.data?.canUndo || undoMutation.isPending} onClick={() => void handleUndo()}>
+            <button type="button" disabled={!summaryQuery.data?.can_undo || undoMutation.isPending} onClick={() => void handleUndo()}>
               Undo last label
             </button>
           </div>
@@ -881,7 +881,7 @@ function App() {
                               onClick={() => selectGridItem(entry.sha256)}
                             >
                               <img src={imageUrl(entry.sha256)} alt={entry.sha256} />
-                              <span>{labelDisplay[entry.newLabel]}</span>
+                              <span>{labelDisplay[entry.new_label]}</span>
                             </button>
                           </Show>
                         )}
@@ -929,15 +929,15 @@ function App() {
                           }}
                         >
                           <img src={imageUrl(entry.item.sha256)} alt={entry.item.sha256} />
-                          <Show when={scoreBarPercent(entry.item.maxModelScore) != null}>
+                          <Show when={scoreBarPercent(entry.item.max_model_score) != null}>
                             <Show
-                              when={scoreBarPercent(entry.item.latestModelThreshold) != null}
+                              when={scoreBarPercent(entry.item.latest_model_threshold) != null}
                               fallback={
                                 <div
                                   class="score-bar"
-                                  data-predicted-label={entry.item.latestModelPredictedLabel ?? "unscored"}
-                                  aria-label={`p ${formatScore(entry.item.maxModelScore)} t ${formatScore(entry.item.latestModelThreshold)}`}
-                                  style={`--score-percent: ${scoreBarPercent(entry.item.maxModelScore)}%;`}
+                                  data-predicted-label={entry.item.latest_model_predicted_label ?? "unscored"}
+                                  aria-label={`p ${formatScore(entry.item.max_model_score)} t ${formatScore(entry.item.latest_model_threshold)}`}
+                                  style={`--score-percent: ${scoreBarPercent(entry.item.max_model_score)}%;`}
                                 >
                                   <div class="score-bar-fill" />
                                 </div>
@@ -945,9 +945,9 @@ function App() {
                             >
                               <div
                                 class="score-bar"
-                                data-predicted-label={entry.item.latestModelPredictedLabel ?? "unscored"}
-                                aria-label={`p ${formatScore(entry.item.maxModelScore)} t ${formatScore(entry.item.latestModelThreshold)}`}
-                                style={`--score-percent: ${scoreBarPercent(entry.item.maxModelScore)}%; --threshold-percent: ${scoreBarPercent(entry.item.latestModelThreshold)}%;`}
+                                data-predicted-label={entry.item.latest_model_predicted_label ?? "unscored"}
+                                aria-label={`p ${formatScore(entry.item.max_model_score)} t ${formatScore(entry.item.latest_model_threshold)}`}
+                                style={`--score-percent: ${scoreBarPercent(entry.item.max_model_score)}%; --threshold-percent: ${scoreBarPercent(entry.item.latest_model_threshold)}%;`}
                               >
                                 <div class="score-bar-fill" />
                                 <div class="score-bar-threshold" />
@@ -1001,7 +1001,7 @@ function App() {
                             <optgroup label={group.label}>
                               <For each={group.queues}>
                                 {(queueName) => (
-                                  <option value={queueName}>{`${queueLabels[queueName]} (${summary().queueCounts[queueName] ?? 0})`}</option>
+                                  <option value={queueName}>{`${queueLabels[queueName]} (${summary().queue_counts[queueName] ?? 0})`}</option>
                                 )}
                               </For>
                             </optgroup>

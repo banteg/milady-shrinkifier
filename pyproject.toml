@@ -10,6 +10,7 @@ dependencies = [
   "fastapi>=0.121.1",
   "httpx>=0.28.1",
   "imagehash>=4.3.2",
+  "msgspec>=0.20.0",
   "numpy>=2.3.3",
   "onnx>=1.19.1",
   "onnxscript>=0.6.2",

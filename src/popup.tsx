@@ -725,11 +725,24 @@ function exportCollectedAvatars(collectedAvatars: CollectedAvatarMap, whitelistH
 
   const payload = {
     version: 1,
-    exportedAt: new Date().toISOString(),
-    avatarCount: avatars.length,
-    totalSightings: avatars.reduce((total, avatar) => total + avatar.seenCount, 0),
-    whitelistHandles,
-    avatars,
+    exported_at: new Date().toISOString(),
+    avatar_count: avatars.length,
+    total_sightings: avatars.reduce((total, avatar) => total + avatar.seenCount, 0),
+    whitelist_handles: whitelistHandles,
+    avatars: avatars.map((avatar) => ({
+      normalized_url: avatar.normalizedUrl,
+      original_url: avatar.originalUrl,
+      handles: avatar.handles,
+      display_names: avatar.displayNames,
+      source_surfaces: avatar.sourceSurfaces,
+      seen_count: avatar.seenCount,
+      first_seen_at: avatar.firstSeenAt,
+      last_seen_at: avatar.lastSeenAt,
+      example_profile_url: avatar.exampleProfileUrl,
+      example_notification_url: avatar.exampleNotificationUrl,
+      example_tweet_url: avatar.exampleTweetUrl,
+      whitelisted: avatar.whitelisted,
+    })),
   };
 
   const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], {
