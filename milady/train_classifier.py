@@ -29,7 +29,7 @@ from .mobilenet_common import (
 )
 from .pipeline_common import MODEL_RUN_ROOT, SPLIT_ROOT, connect_offline_cache_db
 
-HEADLINE_EVAL_POLICY = "manual_export_gold_only"
+HEADLINE_EVAL_POLICY = "manual_export_gold_plus_collection_positive_holdout"
 
 DEFAULT_WANDB_PROJECT = "milady-shrinkifier"
 DEFAULT_WANDB_ENTITY = "banteg-"

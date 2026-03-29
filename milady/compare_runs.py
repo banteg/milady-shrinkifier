@@ -10,7 +10,7 @@ import torch
 from .mobilenet_common import DatasetEntry, compute_metrics, create_model, load_dataset_entries, probabilities_from_model
 from .pipeline_common import MODEL_COMPARE_ROOT, MODEL_RUN_ROOT, SPLIT_MANIFEST_PATH, SPLIT_ROOT, connect_offline_cache_db, ensure_layout, read_json_file
 
-HEADLINE_EVAL_POLICY = "manual_export_gold_only"
+HEADLINE_EVAL_POLICY = "manual_export_gold_plus_collection_positive_holdout"
 ALL_MANUAL_EVAL_POLICY = "all_manual_export_labels"
 
 

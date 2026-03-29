@@ -34,8 +34,11 @@ LABEL_TIER_PRIORITY = {
     "weak": 2,
 }
 WEAK_LABEL_WEIGHT = 0.35
+TRUSTED_COLLECTION_WEIGHT = 0.5
 GOLD_LABEL_SOURCE = "manual"
 PERCEPTUAL_HASH_HAMMING_THRESHOLD = 4
+COLLECTION_HOLDOUT_VAL_COUNT = 64
+COLLECTION_HOLDOUT_TEST_COUNT = 64
 
 
 @dataclass(slots=True)
@@ -157,6 +160,7 @@ def main() -> None:
         groups = build_group_records(samples)
         print(f"[build-dataset] grouped into {len(groups)} image families", flush=True)
         print("[build-dataset] assigning splits", flush=True)
+        collection_holdout_assignments = assign_collection_holdout_groups(groups)
         assignments, manifest_mode = assign_group_splits(groups, args, SPLIT_MANIFEST_PATH)
         print(f"[build-dataset] split mode={manifest_mode}", flush=True)
 
@@ -242,6 +246,7 @@ def main() -> None:
             "duplicatesRemoved": len(samples) - len(dataset_entries),
             "blindEvalEligibleGroups": sum(1 for group in groups if group.blind_eval_eligible),
             "trainOnlyGroups": sum(1 for group in groups if not group.blind_eval_eligible),
+            "collectionBlindHoldoutGroups": len(collection_holdout_assignments),
             "splits": {
                 split_name: {
                     "total": len(entries),
@@ -261,9 +266,13 @@ def main() -> None:
                 "generatedAt": now_iso(),
                 "mode": manifest_mode,
                 "evaluationPolicy": {
-                    "blindEvalRequiresGoldOnly": True,
+                    "blindEvalRequiresGoldOnly": False,
+                    "blindEvalIncludesCollectionHoldoutPositives": True,
                     "goldLabelSource": GOLD_LABEL_SOURCE,
                     "weakLabelWeight": WEAK_LABEL_WEIGHT,
+                    "trustedCollectionWeight": TRUSTED_COLLECTION_WEIGHT,
+                    "collectionBlindHoldoutValCount": COLLECTION_HOLDOUT_VAL_COUNT,
+                    "collectionBlindHoldoutTestCount": COLLECTION_HOLDOUT_TEST_COUNT,
                 },
                 "ratios": {
                     "train": args.train_ratio,
@@ -300,7 +309,7 @@ def build_sample_records(connection, cache_connection) -> list[SampleRecord]:
                 perceptual_hash=fingerprint.perceptual_hash,
                 label_source=collection.label_source,
                 label_tier="trusted",
-                sample_weight=1.0,
+                sample_weight=TRUSTED_COLLECTION_WEIGHT,
                 blind_eval_eligible=False,
             )
         )
@@ -428,15 +437,20 @@ def build_group_records(samples: list[SampleRecord]) -> list[GroupRecord]:
 
 
 def assign_group_splits(groups: list[GroupRecord], args: argparse.Namespace, manifest_path: Path) -> tuple[dict[str, str], str]:
+    forced_eval_assignments = assign_collection_holdout_groups(groups)
     train_only_assignments = {
         group.group_id: "train"
         for group in groups
-        if not group.blind_eval_eligible
+        if not group.blind_eval_eligible and group.group_id not in forced_eval_assignments
     }
-    blind_eval_groups = [group for group in groups if group.blind_eval_eligible]
+    blind_eval_groups = [
+        group
+        for group in groups
+        if group.blind_eval_eligible and group.group_id not in forced_eval_assignments
+    ]
 
     if args.reset_splits or not manifest_path.exists():
-        assignments = train_only_assignments | initial_group_assignments(
+        assignments = forced_eval_assignments | train_only_assignments | initial_group_assignments(
             blind_eval_groups,
             args.train_ratio,
             args.val_ratio,
@@ -460,6 +474,7 @@ def assign_group_splits(groups: list[GroupRecord], args: argparse.Namespace, man
         for group in raw_groups
         if isinstance(group, dict) and group.get("split") in {"train", "val", "test"}
     }
+    assignments.update(forced_eval_assignments)
     for group_id, split in train_only_assignments.items():
         assignments[group_id] = split
 
@@ -510,6 +525,25 @@ def assign_train_val_only(groups: list[GroupRecord], train_ratio: float, val_rat
     assignments = {group_ids[index]: "val" for index in val_indices}
     for index in train_indices:
         assignments[group_ids[index]] = "train"
+    return assignments
+
+
+def assign_collection_holdout_groups(groups: list[GroupRecord]) -> dict[str, str]:
+    eligible_groups = [
+        group
+        for group in groups
+        if group.label == "milady" and all(member.label_source == "collection_corpus" for member in group.members)
+    ]
+    ranked_groups = sorted(
+        eligible_groups,
+        key=lambda group: sha256_bytes(f"collection-holdout:{group.group_id}".encode("utf-8")),
+    )
+    test_groups = ranked_groups[:COLLECTION_HOLDOUT_TEST_COUNT]
+    val_groups = ranked_groups[
+        COLLECTION_HOLDOUT_TEST_COUNT : COLLECTION_HOLDOUT_TEST_COUNT + COLLECTION_HOLDOUT_VAL_COUNT
+    ]
+    assignments = {group.group_id: "test" for group in test_groups}
+    assignments.update({group.group_id: "val" for group in val_groups})
     return assignments
 
 
