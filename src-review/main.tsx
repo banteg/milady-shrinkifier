@@ -155,6 +155,12 @@ const gridGroupLabels: Record<GroupLabel, string> = {
   not_milady: "Not Milady",
   unclear: "Unclear",
 };
+const preferredQueueOrder: QueueName[] = [
+  "uncertain_unlabeled",
+  "high_score_false_positive",
+  "high_score_unlabeled",
+  "unlabeled",
+];
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -305,14 +311,21 @@ function App() {
       return;
     }
 
+    const preferredQueue = preferredQueueOrder.find((candidate) => (summary.queueCounts[candidate] ?? 0) > 0) ?? "unlabeled";
+
     if (!(queue() in summary.queueCounts)) {
-      setQueue("unlabeled");
+      setQueue(preferredQueue);
+      setIndex(0);
+    } else if (queue() === "unlabeled" && preferredQueue !== "unlabeled" && (summary.queueCounts.unlabeled ?? 0) === 0) {
+      setQueue(preferredQueue);
       setIndex(0);
     }
 
     if (gridSource() === "queue") {
       if (!(gridFilter() in summary.queueCounts)) {
         setGridFilter(queue());
+      } else if (gridFilter() === "unlabeled" && preferredQueue !== "unlabeled" && (summary.queueCounts.unlabeled ?? 0) === 0) {
+        setGridFilter(preferredQueue);
       }
     } else if (!(gridFilter() in labeledGridLabels)) {
       setGridFilter("all");
