@@ -397,6 +397,18 @@ function App() {
     return summaryQuery.data?.queueCounts[queue()] ?? 0;
   });
 
+  const summaryCopy = createMemo(() => {
+    const summary = summaryQuery.data;
+    if (!summary) {
+      return "Loading summary…";
+    }
+    const queueCount = activeQueueCount();
+    if (queue() === "unlabeled") {
+      return `${summary.totalImages} images, ${queueCount} unlabeled, run ${summary.selectedRunId ?? "unscored"}`;
+    }
+    return `${summary.totalImages} images, ${queueCount} in ${queueLabels[queue()].toLowerCase()}, ${summary.unlabeled} unlabeled overall, run ${summary.selectedRunId ?? "unscored"}`;
+  });
+
   const currentHeading = createMemo(() => {
     if (selectedSha()) {
       return `selected ${selectedSha()!.slice(0, 8)}`;
@@ -526,6 +538,16 @@ function App() {
     await queryClient.invalidateQueries({ queryKey: ["review"] });
   }
 
+  async function refetchVisibleQueries() {
+    await Promise.all([
+      summaryQuery.refetch(),
+      historyQuery.refetch(),
+      gridQuery.refetch(),
+      activeView() === "batch" ? batchQuery.refetch() : queueQuery.refetch(),
+      selectedSha() !== null ? selectedItemQuery.refetch() : Promise.resolve(),
+    ]);
+  }
+
   const labelMutation = createMutation(() => ({
     mutationFn: (payload: { sha256: string; label: ReviewLabel }) =>
       postJson<{ ok: true; changed: boolean }>("/api/label", payload),
@@ -552,6 +574,7 @@ function App() {
       setIndex((value) => value + 1);
     }
     await invalidateAll();
+    await refetchVisibleQueries();
   }
 
   async function handleSkip() {
@@ -590,6 +613,7 @@ function App() {
     }
     setSelectedSha(null);
     await invalidateAll();
+    await refetchVisibleQueries();
   }
 
   function moveBatchOffset(delta: number) {
@@ -604,6 +628,7 @@ function App() {
       setIndex((value) => Math.max(0, value - 1));
     }
     await invalidateAll();
+    await refetchVisibleQueries();
   }
 
   function selectGridItem(sha256: string) {
@@ -755,17 +780,7 @@ function App() {
               </Show>
             </select>
           </label>
-          <p class="summary-copy">
-            <Show when={summaryQuery.data} fallback="Loading summary…">
-              {(summary) => {
-                const queueCount = activeQueueCount();
-                if (queue() === "unlabeled") {
-                  return `${summary().totalImages} images, ${queueCount} unlabeled, run ${summary().selectedRunId ?? "unscored"}`;
-                }
-                return `${summary().totalImages} images, ${queueCount} in ${queueLabels[queue()].toLowerCase()}, ${summary().unlabeled} unlabeled overall, run ${summary().selectedRunId ?? "unscored"}`;
-              }}
-            </Show>
-          </p>
+          <p class="summary-copy">{summaryCopy()}</p>
           <div class="actions">
             <button type="button" disabled={!summaryQuery.data?.canUndo || undoMutation.isPending} onClick={() => void handleUndo()}>
               Undo last label
