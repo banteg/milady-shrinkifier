@@ -4,7 +4,6 @@ import argparse
 import threading
 import uuid
 from contextlib import closing
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -52,8 +51,7 @@ REVIEW_ASSET_ROOT = REVIEW_STATIC_ROOT / "assets"
 MANUAL_LABEL_SOURCE = "manual"
 
 
-@dataclass(slots=True)
-class ReviewSnapshot:
+class ReviewSnapshot(msgspec.Struct, kw_only=True):
     catalog_path: str
     selected_run_id: str | None
     available_run_ids: list[str]

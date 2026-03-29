@@ -3,11 +3,11 @@ from __future__ import annotations
 import math
 import random
 import sqlite3
-from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 from typing import Literal
 
+import msgspec
 import numpy as np
 import torch
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
@@ -36,8 +36,7 @@ SPLIT_SEED = 1337
 INFERENCE_CROP_VARIANTS: tuple[Literal["center", "top"], ...] = ("center", "top")
 
 
-@dataclass(slots=True)
-class DatasetEntry:
+class DatasetEntry(msgspec.Struct, kw_only=True):
     sample_id: str
     path: Path
     label: str

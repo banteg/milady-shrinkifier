@@ -4,7 +4,6 @@ import hashlib
 import mimetypes
 import os
 import sqlite3
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
@@ -54,8 +53,7 @@ REVIEW_QUEUES = (
 LABELS = ("milady", "not_milady", "unclear")
 LABELED_GRID_FILTERS = ("all", "milady", "not_milady", "unclear")
 
-@dataclass(slots=True)
-class FileFingerprint:
+class FileFingerprint(msgspec.Struct, kw_only=True):
     path: str
     file_size: int
     mtime_ns: int

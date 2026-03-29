@@ -5,11 +5,11 @@ import html
 import random
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
+import msgspec
 
 from .pipeline_common import COLLECTION_MANIFEST_PATH, COLLECTION_ROOT, guess_extension
 from .wire import CollectionFailure, CollectionManifest, CollectionManifestCollection, CollectionSample, dump_json
@@ -24,8 +24,7 @@ DEFAULT_TIMEOUT = 20.0
 BATCH_SIZE = 200
 
 
-@dataclass(frozen=True, slots=True)
-class CollectionSpec:
+class CollectionSpec(msgspec.Struct, frozen=True, kw_only=True):
     slug: str
     name: str
     total_supply: int
@@ -70,8 +69,7 @@ COLLECTIONS: tuple[CollectionSpec, ...] = (
 COLLECTION_LABEL_SOURCE = "collection_corpus"
 
 
-@dataclass(slots=True)
-class DownloadResult:
+class DownloadResult(msgspec.Struct, kw_only=True):
     token_id: int
     success: bool
     local_path: str | None = None

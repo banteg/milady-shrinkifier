@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
-from dataclasses import dataclass
 from pathlib import Path
 
+import msgspec
 from sklearn.model_selection import StratifiedGroupKFold
 
 from .download_collection_samples import COLLECTIONS as NFT_COLLECTIONS, COLLECTION_LABEL_SOURCE
@@ -52,8 +52,7 @@ COLLECTION_HOLDOUT_VAL_COUNT = 64
 COLLECTION_HOLDOUT_TEST_COUNT = 64
 
 
-@dataclass(slots=True)
-class SampleRecord:
+class SampleRecord(msgspec.Struct, kw_only=True):
     sample_id: str
     path: Path
     label: str
@@ -68,8 +67,7 @@ class SampleRecord:
     exported_sha: str | None = None
 
 
-@dataclass(slots=True)
-class GroupRecord:
+class GroupRecord(msgspec.Struct, kw_only=True):
     group_id: str
     label: str
     split: str
@@ -103,8 +101,7 @@ class UnionFind:
             self.rank[left_root] += 1
 
 
-@dataclass(slots=True)
-class BKTreeNode:
+class BKTreeNode(msgspec.Struct, kw_only=True):
     value: int
     indices: list[int]
     children: dict[int, "BKTreeNode"]

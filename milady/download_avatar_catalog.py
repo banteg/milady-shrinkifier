@@ -2,16 +2,15 @@ from __future__ import annotations
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
+import msgspec
 
 from .pipeline_common import AVATAR_ROOT, connect_db, guess_extension, inspect_image_bytes, now_iso, sha256_bytes
 
 
-@dataclass(slots=True)
-class DownloadResult:
+class DownloadResult(msgspec.Struct, kw_only=True):
     normalized_url: str
     sha256: str | None
     local_path: str | None
