@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "milady-shrinkifier"
-version = "0.8.0"
+version = "0.9.0"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.121.1",

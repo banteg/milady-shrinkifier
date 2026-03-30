@@ -39,18 +39,19 @@ All scores below come from the full exported avatar corpus.
 
 - **Precision** — when the extension filters a post, how often it's right.
 - **Recall** — of the Milady-style avatars in the evaluation set, how many it catches.
-- **Evaluation corpus** — `9,394` exported avatars (`486` milady, `8,908` not_milady).
+- **Evaluation corpus** — `10,943` exported avatars (`594` milady, `10,349` not_milady).
 - This is broader than the blind split and still fully human-labeled, but it is not a blind benchmark.
 
 | Version | Run | Training mix | Precision | Recall |
 | --- | --- | --- | --- | --- |
-| `v0.2.2` | `20260327T142224Z` | Milady Maker + `2,596` manually reviewed avatars | `0.9965` | `0.5885` |
-| `v0.3.0` | `20260327T212453Z` | + Remilio, Pixelady + `2,967` manually reviewed avatars | `1.0000` | `0.7058` |
-| `v0.4.0` | `20260328T144735Z` | + `5,715` manually reviewed avatars | `0.9974` | `0.7778` |
-| `v0.5.0` | `20260328T223931Z` | + `6,773` manually reviewed avatars | `0.9977` | `0.8868` |
-| `v0.6.0` | `20260329T124912Z` | + `7,370` manually reviewed avatars | `0.9954` | `0.8951` |
-| `v0.7.0` | `20260329T181946Z` | + `7,695` manually reviewed avatars | `0.9954` | `0.8868` |
-| `v0.8.0` | `20260329T220050Z` | + `9,394` manually reviewed avatars | `0.9958` | `0.9691` |
+| `v0.2.2` | `20260327T142224Z` | Milady Maker + `2,596` manually reviewed avatars | `0.9971` | `0.5875` |
+| `v0.3.0` | `20260327T212453Z` | + Remilio, Pixelady + `2,967` manually reviewed avatars | `0.9977` | `0.7155` |
+| `v0.4.0` | `20260328T144735Z` | + `5,715` manually reviewed avatars | `0.9957` | `0.7811` |
+| `v0.5.0` | `20260328T223931Z` | + `6,773` manually reviewed avatars | `0.9962` | `0.8855` |
+| `v0.6.0` | `20260329T124912Z` | + `7,370` manually reviewed avatars | `0.9961` | `0.8519` |
+| `v0.7.0` | `20260329T181946Z` | + `7,695` manually reviewed avatars | `0.9962` | `0.8771` |
+| `v0.8.0` | `20260329T220050Z` | + `9,394` manually reviewed avatars | `0.9965` | `0.9545` |
+| `v0.9.0` | `20260330Tlr1e4` | + `10,943` manually reviewed avatars | `0.9966` | `0.9747` |
 
 All rows were re-evaluated on the same exported corpus on March 30, 2026, so they are directly comparable.
 
