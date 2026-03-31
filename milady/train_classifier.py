@@ -4,6 +4,7 @@ import argparse
 import math
 import os
 import random
+import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -113,10 +114,13 @@ def main() -> None:
     head_warmup_epochs = max(0, min(args.head_warmup_epochs, args.epochs))
     finetune_epochs = max(0, args.epochs - head_warmup_epochs)
     head_learning_rate = args.head_learning_rate if args.head_learning_rate is not None else args.learning_rate
-    cutmix_enabled = cutmix_is_enabled(args.cutmix, args.cutmix_alpha)
-    mixup_enabled = mixup_is_enabled(args.mixup, args.mixup_alpha) and not cutmix_enabled
-    batch_regularization = resolve_batch_regularization(mixup_enabled, cutmix_enabled)
-    batch_regularization_alpha = args.mixup_alpha if batch_regularization == "mixup" else args.cutmix_alpha if batch_regularization == "cutmix" else 0.0
+    mixup_enabled, cutmix_enabled, batch_regularization = resolve_enabled_regularizers(
+        args.mixup,
+        args.mixup_alpha,
+        args.cutmix,
+        args.cutmix_alpha,
+        mixup_flag_explicit=cli_flag_was_explicitly_set("--mixup"),
+    )
     train_loader = DataLoader(
         AvatarDataset(train_entries, training=True, augment=args.augment == "on"),
         batch_size=args.batch_size,
@@ -144,7 +148,6 @@ def main() -> None:
             head_learning_rate,
             finetune_epochs,
             batch_regularization,
-            batch_regularization_alpha,
         )
         wandb_run = init_wandb(
             args,
@@ -199,7 +202,8 @@ def main() -> None:
                 scheduler,
                 phase,
                 batch_regularization,
-                batch_regularization_alpha,
+                args.mixup_alpha,
+                args.cutmix_alpha,
             )
             val_probabilities, val_labels = evaluate(model, val_entries, device, args.batch_size, cache_connection)
             threshold, threshold_metrics = choose_threshold(val_probabilities, val_labels, args.precision_floor)
@@ -573,12 +577,38 @@ def cutmix_is_enabled(cutmix_mode: str, cutmix_alpha: float) -> bool:
     return cutmix_mode == "on" and cutmix_alpha > 0.0
 
 
+def cli_flag_was_explicitly_set(flag_name: str) -> bool:
+    return any(argument == flag_name or argument.startswith(f"{flag_name}=") for argument in sys.argv[1:])
+
+
+def resolve_enabled_regularizers(
+    mixup_mode: str,
+    mixup_alpha: float,
+    cutmix_mode: str,
+    cutmix_alpha: float,
+    *,
+    mixup_flag_explicit: bool,
+) -> tuple[bool, bool, str]:
+    cutmix_enabled = cutmix_is_enabled(cutmix_mode, cutmix_alpha)
+    mixup_requested = mixup_is_enabled(mixup_mode, mixup_alpha)
+    mixup_enabled = mixup_requested and (mixup_flag_explicit or not cutmix_enabled)
+    return mixup_enabled, cutmix_enabled, resolve_batch_regularization(mixup_enabled, cutmix_enabled)
+
+
 def resolve_batch_regularization(mixup_enabled: bool, cutmix_enabled: bool) -> str:
+    if mixup_enabled and cutmix_enabled:
+        return "mixup_or_cutmix"
     if cutmix_enabled:
         return "cutmix"
     if mixup_enabled:
         return "mixup"
     return "off"
+
+
+def choose_batch_regularization_method(batch_regularization: str) -> str:
+    if batch_regularization != "mixup_or_cutmix":
+        return batch_regularization
+    return "cutmix" if random.random() < 0.5 else "mixup"
 
 
 def identity_regularized_batch(
@@ -751,12 +781,14 @@ def create_regularized_batch(
     labels: torch.Tensor,
     sample_weights: torch.Tensor,
     batch_regularization: str,
-    batch_regularization_alpha: float,
+    mixup_alpha: float,
+    cutmix_alpha: float,
 ) -> RegularizedBatch:
-    if batch_regularization == "mixup":
-        return create_mixup_batch(inputs, labels, sample_weights, batch_regularization_alpha)
-    if batch_regularization == "cutmix":
-        return create_cutmix_batch(inputs, labels, sample_weights, batch_regularization_alpha)
+    selected_method = choose_batch_regularization_method(batch_regularization)
+    if selected_method == "mixup":
+        return create_mixup_batch(inputs, labels, sample_weights, mixup_alpha)
+    if selected_method == "cutmix":
+        return create_cutmix_batch(inputs, labels, sample_weights, cutmix_alpha)
     return identity_regularized_batch(inputs, labels, sample_weights)
 
 
@@ -782,7 +814,8 @@ def run_epoch(
     scheduler,
     phase: str,
     batch_regularization: str,
-    batch_regularization_alpha: float,
+    mixup_alpha: float,
+    cutmix_alpha: float,
 ) -> tuple[float, int]:
     model.train()
     set_backbone_batchnorm_mode(model, frozen=phase == "warmup")
@@ -799,7 +832,8 @@ def run_epoch(
             labels,
             sample_weights,
             batch_regularization,
-            batch_regularization_alpha,
+            mixup_alpha,
+            cutmix_alpha,
         )
         optimizer.zero_grad(set_to_none=True)
         logits = model(batch.inputs)
@@ -871,7 +905,6 @@ def print_run_header(
     head_learning_rate: float,
     finetune_epochs: int,
     batch_regularization: str,
-    batch_regularization_alpha: float,
 ) -> None:
     positives = sum(1 for entry in train_entries if entry.label == "milady")
     negatives = len(train_entries) - positives
@@ -882,8 +915,9 @@ def print_run_header(
         f"seed={args.seed} "
         f"warmup_epochs={head_warmup_epochs} head_lr={head_learning_rate:g} "
         f"scheduler={args.scheduler} label_smoothing={args.label_smoothing:g} augment={args.augment} "
-        f"batch_regularization={batch_regularization} batch_regularization_alpha={batch_regularization_alpha:g} "
-        f"mixup={'on' if batch_regularization == 'mixup' else 'off'} cutmix={'on' if batch_regularization == 'cutmix' else 'off'}",
+        f"batch_regularization={batch_regularization} "
+        f"mixup={'on' if mixup_is_enabled(args.mixup, args.mixup_alpha) else 'off'} mixup_alpha={(args.mixup_alpha if mixup_is_enabled(args.mixup, args.mixup_alpha) else 0.0):g} "
+        f"cutmix={'on' if cutmix_is_enabled(args.cutmix, args.cutmix_alpha) else 'off'} cutmix_alpha={(args.cutmix_alpha if cutmix_is_enabled(args.cutmix, args.cutmix_alpha) else 0.0):g}",
         flush=True,
     )
     print(

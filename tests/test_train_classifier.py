@@ -5,7 +5,16 @@ import torch
 from torch import nn
 
 import milady.train_classifier as train_classifier
-from milady.train_classifier import RegularizedBatch, compute_regularized_loss, create_cutmix_batch, create_mixup_batch
+from milady.train_classifier import (
+    RegularizedBatch,
+    compute_regularized_loss,
+    cli_flag_was_explicitly_set,
+    create_cutmix_batch,
+    create_mixup_batch,
+    create_regularized_batch,
+    resolve_batch_regularization,
+    resolve_enabled_regularizers,
+)
 
 
 def test_create_mixup_batch_is_noop_when_alpha_is_disabled() -> None:
@@ -24,6 +33,52 @@ def test_create_mixup_batch_is_noop_when_alpha_is_disabled() -> None:
     assert torch.equal(batch.secondary_labels, labels)
     assert torch.equal(batch.primary_contributions, weights)
     assert torch.equal(batch.secondary_contributions, torch.zeros_like(weights))
+
+
+def test_resolve_batch_regularization_supports_randomized_dual_mode() -> None:
+    assert resolve_batch_regularization(mixup_enabled=True, cutmix_enabled=True) == "mixup_or_cutmix"
+    assert resolve_batch_regularization(mixup_enabled=True, cutmix_enabled=False) == "mixup"
+    assert resolve_batch_regularization(mixup_enabled=False, cutmix_enabled=True) == "cutmix"
+    assert resolve_batch_regularization(mixup_enabled=False, cutmix_enabled=False) == "off"
+
+
+def test_cli_flag_was_explicitly_set_detects_plain_and_equals_forms(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(train_classifier.sys, "argv", ["milady train", "--mixup", "on"])
+    assert cli_flag_was_explicitly_set("--mixup") is True
+
+    monkeypatch.setattr(train_classifier.sys, "argv", ["milady train", "--mixup=on"])
+    assert cli_flag_was_explicitly_set("--mixup") is True
+
+    monkeypatch.setattr(train_classifier.sys, "argv", ["milady train", "--cutmix", "on"])
+    assert cli_flag_was_explicitly_set("--mixup") is False
+
+
+def test_resolve_enabled_regularizers_preserves_legacy_cutmix_only_behavior() -> None:
+    mixup_enabled, cutmix_enabled, batch_regularization = resolve_enabled_regularizers(
+        mixup_mode="on",
+        mixup_alpha=0.2,
+        cutmix_mode="on",
+        cutmix_alpha=1.0,
+        mixup_flag_explicit=False,
+    )
+
+    assert mixup_enabled is False
+    assert cutmix_enabled is True
+    assert batch_regularization == "cutmix"
+
+
+def test_resolve_enabled_regularizers_allows_dual_mode_when_mixup_is_explicit() -> None:
+    mixup_enabled, cutmix_enabled, batch_regularization = resolve_enabled_regularizers(
+        mixup_mode="on",
+        mixup_alpha=0.2,
+        cutmix_mode="on",
+        cutmix_alpha=1.0,
+        mixup_flag_explicit=True,
+    )
+
+    assert mixup_enabled is True
+    assert cutmix_enabled is True
+    assert batch_regularization == "mixup_or_cutmix"
 
 
 def test_create_mixup_batch_weights_inputs_by_sample_contribution(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -73,6 +128,64 @@ def test_create_mixup_batch_weights_inputs_by_sample_contribution(monkeypatch: p
     assert torch.allclose(batch.secondary_contributions, expected_secondary_contributions)
     assert torch.allclose(batch.inputs, expected_inputs)
     assert torch.equal(batch.inputs[paired_weights == 0], inputs[paired_weights == 0])
+
+
+def test_create_regularized_batch_can_choose_mixup_when_both_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    expected = RegularizedBatch(
+        inputs=torch.ones((1, 1, 1)),
+        primary_labels=torch.tensor([1]),
+        secondary_labels=torch.tensor([0]),
+        primary_contributions=torch.tensor([0.5]),
+        secondary_contributions=torch.tensor([0.5]),
+        lambda_value=0.2,
+        effective_primary_ratio=0.5,
+        method="mixup",
+        active=True,
+    )
+
+    monkeypatch.setattr(train_classifier.random, "random", lambda: 0.9)
+    monkeypatch.setattr(train_classifier, "create_mixup_batch", lambda *_args: expected)
+    monkeypatch.setattr(train_classifier, "create_cutmix_batch", lambda *_args: pytest.fail("cutmix should not be selected"))
+
+    actual = create_regularized_batch(
+        inputs=torch.zeros((1, 1, 1)),
+        labels=torch.tensor([0]),
+        sample_weights=torch.tensor([1.0]),
+        batch_regularization="mixup_or_cutmix",
+        mixup_alpha=0.2,
+        cutmix_alpha=1.0,
+    )
+
+    assert actual is expected
+
+
+def test_create_regularized_batch_can_choose_cutmix_when_both_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    expected = RegularizedBatch(
+        inputs=torch.ones((1, 1, 1, 1)),
+        primary_labels=torch.tensor([1]),
+        secondary_labels=torch.tensor([0]),
+        primary_contributions=torch.tensor([0.75]),
+        secondary_contributions=torch.tensor([0.25]),
+        lambda_value=0.2,
+        effective_primary_ratio=0.75,
+        method="cutmix",
+        active=True,
+    )
+
+    monkeypatch.setattr(train_classifier.random, "random", lambda: 0.1)
+    monkeypatch.setattr(train_classifier, "create_cutmix_batch", lambda *_args: expected)
+    monkeypatch.setattr(train_classifier, "create_mixup_batch", lambda *_args: pytest.fail("mixup should not be selected"))
+
+    actual = create_regularized_batch(
+        inputs=torch.zeros((1, 1, 1, 1)),
+        labels=torch.tensor([0]),
+        sample_weights=torch.tensor([1.0]),
+        batch_regularization="mixup_or_cutmix",
+        mixup_alpha=0.2,
+        cutmix_alpha=1.0,
+    )
+
+    assert actual is expected
 
 
 def test_create_cutmix_batch_does_not_let_zero_weight_partner_change_pixels(monkeypatch: pytest.MonkeyPatch) -> None:
