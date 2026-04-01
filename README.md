@@ -52,8 +52,9 @@ All scores below come from the full exported avatar corpus.
 | `v0.7.0` | `20260329T181946Z` | + `7,695` manually reviewed avatars | `0.9962` | `0.8771` |
 | `v0.8.0` | `20260329T220050Z` | + `9,394` manually reviewed avatars | `0.9965` | `0.9545` |
 | `v0.9.0` | `20260330Tlr1e4` | + `10,943` manually reviewed avatars | `0.9966` | `0.9747` |
+| `v0.10.0` | `20260401T121312Z` | + `10,943` manually reviewed avatars | `0.9965` | `0.9714` |
 
-All rows were re-evaluated on the same exported corpus on March 30, 2026, so they are directly comparable.
+All rows use the same exported evaluation corpus, so they are directly comparable.
 
 ## Development
 
