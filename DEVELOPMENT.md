@@ -59,7 +59,7 @@ uv run milady review
 uv run milady build-dataset
 uv run milady train --run-id <candidate-run-id>
 uv run milady score --run-id <run-id>
-uv run milady compare --run-id <current-best-run-id> --run-id <candidate-run-id>
+uv run milady eval --run-id <current-best-run-id> --run-id <candidate-run-id>
 uv run milady export-errors --compare-dir <compare-dir>
 uv run milady export-onnx --run-id <run-id>
 pnpm run build

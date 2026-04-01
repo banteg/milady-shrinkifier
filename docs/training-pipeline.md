@@ -271,13 +271,13 @@ After training, rescore and compare:
 
 ```bash
 uv run milady score --run-id <candidate-run-id>
-uv run milady compare --run-id <current-prod-run-id> --run-id <candidate-run-id>
+uv run milady eval --run-id <current-prod-run-id> --run-id <candidate-run-id>
 uv run milady export-errors --compare-dir <compare-dir>
 ```
 
 This is the decision point before promotion.
 
-`compare` re-evaluates runs side by side on the same evaluation set. `export-errors` turns false positives and false negatives into image folders so you can inspect what changed.
+`eval` re-evaluates runs side by side on the same evaluation set. `export-errors` turns false positives and false negatives into image folders so you can inspect what changed.
 
 This is where you find out whether the next improvement should come from:
 
@@ -315,7 +315,7 @@ uv run milady review
 uv run milady build-dataset
 uv run milady train --run-id <candidate-run-id>
 uv run milady score --run-id <candidate-run-id>
-uv run milady compare --run-id <current-prod-run-id> --run-id <candidate-run-id>
+uv run milady eval --run-id <current-prod-run-id> --run-id <candidate-run-id>
 uv run milady export-errors --compare-dir <compare-dir>
 uv run milady export-onnx --run-id <candidate-run-id>
 pnpm run build

@@ -23,11 +23,25 @@ from .wire import (
 HEADLINE_EVAL_POLICY = "manual_export_gold_plus_collection_positive_holdout"
 ALL_MANUAL_EVAL_POLICY = "all_manual_export_labels"
 ALL_EXPORTED_EVAL_POLICY = "all_exported_labels"
+PROD_RELEASES: list[tuple[str, str]] = [
+    ("v0.2.2", "20260327T142224Z"),
+    ("v0.3.0", "20260327T212453Z"),
+    ("v0.4.0", "20260328T144735Z"),
+    ("v0.5.0", "20260328T223931Z"),
+    ("v0.6.0", "20260329T124912Z"),
+    ("v0.7.0", "20260329T181946Z"),
+    ("v0.8.0", "20260329T220050Z"),
+]
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Compare trained classifier checkpoints on the current dataset splits.")
-    parser.add_argument("--run-id", dest="run_ids", action="append", required=True, help="Run ID to compare. Pass multiple times.")
+    parser = argparse.ArgumentParser(description="Evaluate trained classifier checkpoints on a shared evaluation set.")
+    parser.add_argument("--run-id", dest="run_ids", action="append", help="Run ID to evaluate. Pass multiple times.")
+    parser.add_argument(
+        "--group",
+        choices=("prod-history", "latest-vs-prod"),
+        help="Named run group to evaluate instead of passing explicit --run-id values.",
+    )
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--cpu", action="store_true", help="Force CPU evaluation.")
     parser.add_argument("--output-dir", type=Path, help="Optional output directory. Defaults under cache/models/.../compare.")
@@ -37,18 +51,32 @@ def parse_args() -> argparse.Namespace:
         default="blind",
         help="Evaluation population: blind val/test splits, all deduped manually labeled exported avatars, or all deduped exported avatars including model labels.",
     )
-    return parser.parse_args()
+    parser.add_argument("--prod-only", action="store_true", help="For prod-history, skip the latest non-promoted work-in-progress run.")
+
+    args = parser.parse_args()
+    if args.group is not None and args.run_ids:
+        raise SystemExit("Pass either explicit --run-id values or --group, not both.")
+    if args.group is None and not args.run_ids:
+        raise SystemExit("Pass --run-id at least twice, or select a preset with --group.")
+    if args.group == "latest-vs-prod" and args.prod_only:
+        raise SystemExit("--prod-only only applies to --group prod-history.")
+    return args
 
 
 def main() -> None:
     args = parse_args()
-    run_compare(
-        run_ids=args.run_ids,
+    run_ids, releases = resolve_run_selection(args)
+    results, summary_output = run_compare(
+        run_ids=run_ids,
         eval_set=args.eval_set,
         batch_size=args.batch_size,
         force_cpu=args.cpu,
-        output_dir=args.output_dir,
+        output_dir=args.output_dir or default_group_output_dir(args.group, args.eval_set),
     )
+    if releases is not None:
+        results.releases = releases
+        dump_json(summary_output, results)
+        print_releases(results.releases)
 
 
 def run_compare(
@@ -151,6 +179,24 @@ def run_compare(
         cache_connection.close()
 
 
+def resolve_run_selection(args: argparse.Namespace) -> tuple[list[str], dict[str, str] | None]:
+    if args.group == "prod-history":
+        releases = list(PROD_RELEASES)
+        if not args.prod_only:
+            latest_wip = find_latest_wip_run()
+            if latest_wip is not None:
+                releases.append(("wip", latest_wip))
+        return [run_id for _, run_id in releases], {version: run_id for version, run_id in releases}
+    if args.group == "latest-vs-prod":
+        latest_wip = find_latest_wip_run()
+        if latest_wip is None:
+            raise SystemExit("No non-promoted work-in-progress run found.")
+        current_version, current_prod_run_id = PROD_RELEASES[-1]
+        releases = [(current_version, current_prod_run_id), ("wip", latest_wip)]
+        return [current_prod_run_id, latest_wip], {version: run_id for version, run_id in releases}
+    return args.run_ids, None
+
+
 def dedupe(run_ids: list[str]) -> list[str]:
     seen: set[str] = set()
     ordered: list[str] = []
@@ -166,6 +212,44 @@ def default_output_dir(run_ids: list[str]) -> Path:
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     slug = "__".join(run_ids)
     return MODEL_COMPARE_ROOT / f"{stamp}__{slug}"
+
+
+def default_group_output_dir(group: str | None, eval_set: str) -> Path | None:
+    if group is None:
+        return None
+    stamp = datetime.now(UTC).strftime("%Y%m%d")
+    if group == "prod-history":
+        return MODEL_COMPARE_ROOT / f"prod-history-{eval_set}-{stamp}"
+    if group == "latest-vs-prod":
+        return MODEL_COMPARE_ROOT / f"latest-vs-prod-{eval_set}-{stamp}"
+    return None
+
+
+def find_latest_wip_run() -> str | None:
+    prod_run_ids = {run_id for _, run_id in PROD_RELEASES}
+    candidates: list[tuple[float, str]] = []
+    for run_dir in MODEL_RUN_ROOT.iterdir():
+        if not run_dir.is_dir():
+            continue
+        run_id = run_dir.name
+        if run_id in prod_run_ids:
+            continue
+        summary_path = run_dir / "summary.json"
+        checkpoint_path = run_dir / "best.pt"
+        if not summary_path.exists() or not checkpoint_path.exists():
+            continue
+        candidates.append((summary_path.stat().st_mtime, run_id))
+    if not candidates:
+        return None
+    candidates.sort(reverse=True)
+    return candidates[0][1]
+
+
+def print_releases(releases: dict[str, str]) -> None:
+    print("")
+    print("Run labels")
+    for label, run_id in releases.items():
+        print(f"  {label:<8} {run_id}")
 
 
 def load_evaluation_entries(eval_set: str) -> tuple[list, list, str]:
