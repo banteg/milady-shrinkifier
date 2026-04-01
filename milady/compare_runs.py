@@ -67,7 +67,7 @@ def parse_args() -> argparse.Namespace:
     if args.group is not None and args.run_ids:
         raise SystemExit("Pass either explicit --run-id values or --group, not both.")
     if args.group is None and not args.run_ids:
-        raise SystemExit("Pass --run-id at least twice, or select a preset with --group.")
+        raise SystemExit("Pass at least one --run-id, or select a preset with --group.")
     if args.group == "latest-vs-prod" and args.prod_only:
         raise SystemExit("--prod-only only applies to --group prod-history.")
     return args
@@ -98,8 +98,8 @@ def run_compare(
     output_dir: Path | None = None,
 ) -> tuple[CompareSummary, Path]:
     run_ids = dedupe(run_ids)
-    if len(run_ids) < 2:
-        raise SystemExit("Pass at least two --run-id values.")
+    if not run_ids:
+        raise SystemExit("Pass at least one --run-id value.")
 
     ensure_layout()
     resolved_output_dir = output_dir or default_output_dir(run_ids)
