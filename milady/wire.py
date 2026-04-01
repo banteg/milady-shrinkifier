@@ -159,7 +159,6 @@ class SplitManifestCanonical(msgspec.Struct, kw_only=True):
     blind_eval_eligible: bool
     raw_sha: str
     pixel_digest: str
-    perceptual_hash: str
 
 
 class SplitManifestMember(msgspec.Struct, kw_only=True):
@@ -172,7 +171,6 @@ class SplitManifestMember(msgspec.Struct, kw_only=True):
     blind_eval_eligible: bool
     raw_sha: str
     pixel_digest: str
-    perceptual_hash: str
     exported_sha: str | None = None
 
 

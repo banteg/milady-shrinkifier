@@ -47,7 +47,6 @@ DEFAULT_MODEL_LABEL_WEIGHT = 1.0
 GOLD_LABEL_SOURCE = "manual"
 MODEL_LABEL_SOURCE = "model"
 TRUSTED_LABEL_SOURCES = {MODEL_LABEL_SOURCE}
-PERCEPTUAL_HASH_HAMMING_THRESHOLD = 4
 COLLECTION_HOLDOUT_VAL_COUNT = 64
 COLLECTION_HOLDOUT_TEST_COUNT = 64
 
@@ -59,7 +58,6 @@ class SampleRecord(msgspec.Struct, kw_only=True):
     source: str
     raw_sha: str
     pixel_digest: str
-    perceptual_hash: str
     label_source: str
     label_tier: str
     sample_weight: float
@@ -99,52 +97,6 @@ class UnionFind:
         else:
             self.parent[right_root] = left_root
             self.rank[left_root] += 1
-
-
-class BKTreeNode(msgspec.Struct, kw_only=True):
-    value: int
-    indices: list[int]
-    children: dict[int, "BKTreeNode"]
-
-
-class HammingBKTree:
-    def __init__(self) -> None:
-        self.root: BKTreeNode | None = None
-
-    def insert(self, value: int, index: int) -> None:
-        if self.root is None:
-            self.root = BKTreeNode(value=value, indices=[index], children={})
-            return
-
-        node = self.root
-        while True:
-            distance = hamming_distance(value, node.value)
-            if distance == 0:
-                node.indices.append(index)
-                return
-            child = node.children.get(distance)
-            if child is None:
-                node.children[distance] = BKTreeNode(value=value, indices=[index], children={})
-                return
-            node = child
-
-    def search(self, value: int, max_distance: int) -> list[int]:
-        if self.root is None:
-            return []
-
-        matches: list[int] = []
-        stack = [self.root]
-        while stack:
-            node = stack.pop()
-            distance = hamming_distance(value, node.value)
-            if distance <= max_distance:
-                matches.extend(node.indices)
-            lower = max(1, distance - max_distance)
-            upper = distance + max_distance
-            for child_distance, child in node.children.items():
-                if lower <= child_distance <= upper:
-                    stack.append(child)
-        return matches
 
 
 def parse_args() -> argparse.Namespace:
@@ -209,7 +161,6 @@ def main() -> None:
                         blind_eval_eligible=group.blind_eval_eligible,
                         raw_sha=group.canonical.raw_sha,
                         pixel_digest=group.canonical.pixel_digest,
-                        perceptual_hash=group.canonical.perceptual_hash,
                     ),
                     members=[
                         SplitManifestMember(
@@ -222,7 +173,6 @@ def main() -> None:
                             blind_eval_eligible=member.blind_eval_eligible,
                             raw_sha=member.raw_sha,
                             pixel_digest=member.pixel_digest,
-                            perceptual_hash=member.perceptual_hash,
                             exported_sha=member.exported_sha,
                         )
                         for member in sorted(group.members, key=lambda item: item.sample_id)
@@ -320,7 +270,6 @@ def build_sample_records(connection, cache_connection, model_label_weight: float
                 source=collection.slug,
                 raw_sha=fingerprint.raw_sha,
                 pixel_digest=fingerprint.pixel_digest,
-                perceptual_hash=fingerprint.perceptual_hash,
                 label_source=COLLECTION_LABEL_SOURCE,
                 label_tier="trusted",
                 sample_weight=TRUSTED_COLLECTION_WEIGHT,
@@ -357,7 +306,6 @@ def build_sample_records(connection, cache_connection, model_label_weight: float
                 source="export",
                 raw_sha=str(row["sha256"]),
                 pixel_digest=fingerprint.pixel_digest,
-                perceptual_hash=fingerprint.perceptual_hash,
                 label_source=label_source,
                 label_tier=label_tier,
                 sample_weight=sample_weight_for_export_label_source(label_source, model_label_weight),
@@ -399,7 +347,6 @@ def build_group_records(samples: list[SampleRecord]) -> list[GroupRecord]:
     union_find = UnionFind(len(samples))
     raw_sha_to_index: dict[str, int] = {}
     pixel_digest_to_index: dict[str, int] = {}
-    perceptual_hash_tree = HammingBKTree()
 
     for index, sample in enumerate(samples):
         previous = raw_sha_to_index.get(sample.raw_sha)
@@ -413,15 +360,6 @@ def build_group_records(samples: list[SampleRecord]) -> list[GroupRecord]:
             union_find.union(index, previous)
         else:
             pixel_digest_to_index[sample.pixel_digest] = index
-
-        if sample.perceptual_hash:
-            perceptual_hash_value = int(sample.perceptual_hash, 16)
-            for previous_index in perceptual_hash_tree.search(
-                perceptual_hash_value,
-                PERCEPTUAL_HASH_HAMMING_THRESHOLD,
-            ):
-                union_find.union(index, previous_index)
-            perceptual_hash_tree.insert(perceptual_hash_value, index)
 
     buckets: dict[int, list[SampleRecord]] = {}
     for index, sample in enumerate(samples):
@@ -583,10 +521,6 @@ def stratified_group_partition(group_ids: list[str], labels: list[int], holdout_
 def compute_group_id(members: list[SampleRecord]) -> str:
     keys = sorted({f"sha:{member.raw_sha}" for member in members} | {f"pix:{member.pixel_digest}" for member in members})
     return sha256_bytes("|".join(keys).encode("utf-8"))
-
-
-def hamming_distance(left: int, right: int) -> int:
-    return (left ^ right).bit_count()
 
 
 def label_tier_for_export_label_source(label_source: str) -> str:
