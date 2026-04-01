@@ -124,7 +124,6 @@ def run_compare(
             checkpoint_path = MODEL_RUN_ROOT / run_id / "best.pt"
             if not summary_path.exists() or not checkpoint_path.exists():
                 raise SystemExit(f"Missing summary or checkpoint for run {run_id}")
-            print(f"[compare:{run_id}] loading checkpoint", flush=True)
 
             summary = load_json(summary_path, RunSummary)
             precision_floor = float(summary.precision_floor)
@@ -133,7 +132,6 @@ def run_compare(
             state = torch.load(checkpoint_path, map_location=device)
             model.load_state_dict(state)
 
-            print(f"[compare:{run_id}] evaluating validation split", flush=True)
             val_probabilities, val_labels = evaluate(model, val_entries, device, batch_size, cache_connection)
             threshold, val_metrics = choose_threshold(val_probabilities, val_labels, precision_floor)
             print(
@@ -141,7 +139,6 @@ def run_compare(
                 f"precision={val_metrics.precision:.4f} recall={val_metrics.recall:.4f}",
                 flush=True,
             )
-            print(f"[compare:{run_id}] evaluating test split", flush=True)
             test_probabilities, test_labels = evaluate(model, test_entries, device, batch_size, cache_connection)
             test_metrics = compute_metrics(test_probabilities, test_labels, threshold)
 
