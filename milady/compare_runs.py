@@ -7,13 +7,22 @@ from pathlib import Path
 import torch
 
 from .mobilenet_common import DatasetEntry, choose_threshold, compute_metrics, create_model, load_dataset_entries, probabilities_from_model
-from .pipeline_common import MODEL_COMPARE_ROOT, MODEL_RUN_ROOT, SPLIT_MANIFEST_PATH, SPLIT_ROOT, connect_offline_cache_db, ensure_layout
+from .pipeline_common import (
+    MODEL_COMPARE_ROOT,
+    MODEL_RUN_ROOT,
+    PUBLIC_METADATA_PATH,
+    SPLIT_MANIFEST_PATH,
+    SPLIT_ROOT,
+    connect_offline_cache_db,
+    ensure_layout,
+)
 from .wire import (
     CompareErrorItem,
     CompareRunSummary,
     CompareSummary,
     CompareSummaryEvaluationPolicy,
     DiagnosticBucket,
+    PublicModelMetadata,
     RunSummary,
     SplitManifest,
     dump_json,
@@ -31,6 +40,7 @@ PROD_RELEASES: list[tuple[str, str]] = [
     ("v0.6.0", "20260329T124912Z"),
     ("v0.7.0", "20260329T181946Z"),
     ("v0.8.0", "20260329T220050Z"),
+    ("v0.9.0", "20260330Tlr1e4"),
 ]
 
 
@@ -191,8 +201,8 @@ def resolve_run_selection(args: argparse.Namespace) -> tuple[list[str], dict[str
         latest_wip = find_latest_wip_run()
         if latest_wip is None:
             raise SystemExit("No non-promoted work-in-progress run found.")
-        current_version, current_prod_run_id = PROD_RELEASES[-1]
-        releases = [(current_version, current_prod_run_id), ("wip", latest_wip)]
+        current_prod_run_id = load_current_promoted_run_id()
+        releases = [("prod", current_prod_run_id), ("wip", latest_wip)]
         return [current_prod_run_id, latest_wip], {version: run_id for version, run_id in releases}
     return args.run_ids, None
 
@@ -243,6 +253,11 @@ def find_latest_wip_run() -> str | None:
         return None
     candidates.sort(reverse=True)
     return candidates[0][1]
+
+
+def load_current_promoted_run_id() -> str:
+    metadata = load_json(PUBLIC_METADATA_PATH, PublicModelMetadata)
+    return metadata.run_id
 
 
 def print_releases(releases: dict[str, str]) -> None:
