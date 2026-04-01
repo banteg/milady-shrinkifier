@@ -39,20 +39,20 @@ All scores below come from the full exported avatar corpus.
 
 - **Precision** — when the extension filters a post, how often it's right.
 - **Recall** — of the Milady-style avatars in the evaluation set, how many it catches.
-- **Evaluation corpus** — `10,943` exported avatars (`594` milady, `10,349` not_milady).
+- **Evaluation corpus** — `14,869` exported avatars (`1,293` milady, `13,576` not_milady).
 - This is broader than the blind split and still fully human-labeled, but it is not a blind benchmark.
 
 | Version | Run | Training mix | Precision | Recall |
 | --- | --- | --- | --- | --- |
-| `v0.2.2` | `20260327T142224Z` | Milady Maker + `2,596` manually reviewed avatars | `0.9971` | `0.5875` |
-| `v0.3.0` | `20260327T212453Z` | + Remilio, Pixelady + `2,967` manually reviewed avatars | `0.9977` | `0.7155` |
-| `v0.4.0` | `20260328T144735Z` | + `5,715` manually reviewed avatars | `0.9957` | `0.7811` |
-| `v0.5.0` | `20260328T223931Z` | + `6,773` manually reviewed avatars | `0.9962` | `0.8855` |
-| `v0.6.0` | `20260329T124912Z` | + `7,370` manually reviewed avatars | `0.9961` | `0.8519` |
-| `v0.7.0` | `20260329T181946Z` | + `7,695` manually reviewed avatars | `0.9962` | `0.8771` |
-| `v0.8.0` | `20260329T220050Z` | + `9,394` manually reviewed avatars | `0.9965` | `0.9545` |
-| `v0.9.0` | `20260330Tlr1e4` | + `10,943` manually reviewed avatars | `0.9966` | `0.9747` |
-| `v0.10.0` | `20260401T121312Z` | + `10,943` manually reviewed avatars | `0.9965` | `0.9714` |
+| `v0.2.2` | `20260327T142224Z` | Milady Maker + `2,596` manually reviewed avatars | `0.9960` | `0.5839` |
+| `v0.3.0` | `20260327T212453Z` | + Remilio, Pixelady + `2,967` manually reviewed avatars | `0.9956` | `0.6930` |
+| `v0.4.0` | `20260328T144735Z` | + `5,715` manually reviewed avatars | `0.9950` | `0.7695` |
+| `v0.5.0` | `20260328T223931Z` | + `6,773` manually reviewed avatars | `0.9951` | `0.7827` |
+| `v0.6.0` | `20260329T124912Z` | + `7,370` manually reviewed avatars | `0.9952` | `0.7974` |
+| `v0.7.0` | `20260329T181946Z` | + `7,695` manually reviewed avatars | `0.9954` | `0.8306` |
+| `v0.8.0` | `20260329T220050Z` | + `9,394` manually reviewed avatars | `0.9956` | `0.8801` |
+| `v0.9.0` | `20260330Tlr1e4` | + `10,943` manually reviewed avatars | `0.9957` | `0.8894` |
+| `v0.10.0` | `20260401T145142Z` | + `14,869` manually reviewed avatars | `0.9952` | `0.9582` |
 
 All rows use the same exported evaluation corpus, so they are directly comparable.
 
