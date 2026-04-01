@@ -26,16 +26,19 @@ from .mobilenet_common import (
     load_dataset_entries,
     probabilities_from_model,
 )
-from .pipeline_common import MODEL_RUN_ROOT, SPLIT_ROOT, connect_offline_cache_db
+from .pipeline_common import COLLECTION_MANIFEST_PATH, MODEL_RUN_ROOT, SPLIT_MANIFEST_PATH, SPLIT_ROOT, connect_db, connect_offline_cache_db
 from .wire import (
+    CollectionManifest,
     DiagnosticBucket,
     MetricSummary,
     RunDatasetSplitSummary,
     RunEvaluationPolicy,
     RunHistoryEntry,
     RunSummary,
+    SplitManifest,
     dump_json,
     encode_json,
+    load_json,
 )
 
 HEADLINE_EVAL_POLICY = "manual_export_gold_plus_collection_positive_holdout"
@@ -79,6 +82,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    assert_dataset_is_fresh()
     train_entries = load_dataset_entries(SPLIT_ROOT / "train.jsonl")
     val_entries = load_dataset_entries(SPLIT_ROOT / "val.jsonl")
     test_entries = load_dataset_entries(SPLIT_ROOT / "test.jsonl")
@@ -340,6 +344,61 @@ def main() -> None:
         print(encode_json(summary, pretty=True).decode("utf-8"))
     finally:
         cache_connection.close()
+
+
+def assert_dataset_is_fresh() -> None:
+    if not SPLIT_MANIFEST_PATH.exists():
+        raise SystemExit("Missing split manifest. Run `uv run milady build-dataset` first.")
+
+    split_manifest = load_json(SPLIT_MANIFEST_PATH, SplitManifest)
+    split_generated_at = parse_timestamp(split_manifest.generated_at)
+    stale_reasons: list[str] = []
+
+    connection = connect_db()
+    try:
+        label_row = connection.execute(
+            """
+            SELECT MAX(updated_at) AS latest_updated_at
+            FROM images
+            WHERE label IN ('milady', 'not_milady')
+              AND label_source IN ('manual', 'model')
+            """
+        ).fetchone()
+    finally:
+        connection.close()
+
+    latest_label_timestamp = None if label_row is None else label_row["latest_updated_at"]
+    if latest_label_timestamp is not None:
+        latest_label_update = parse_timestamp(str(latest_label_timestamp))
+        if latest_label_update > split_generated_at:
+            stale_reasons.append(
+                "exported labels changed after the last dataset build "
+                f"({latest_label_update.isoformat()} > {split_generated_at.isoformat()})"
+            )
+
+    if COLLECTION_MANIFEST_PATH.exists():
+        collection_manifest = load_json(COLLECTION_MANIFEST_PATH, CollectionManifest)
+        if collection_manifest.generated_at is not None:
+            collection_generated_at = parse_timestamp(collection_manifest.generated_at)
+            if collection_generated_at > split_generated_at:
+                stale_reasons.append(
+                    "collection manifest changed after the last dataset build "
+                    f"({collection_generated_at.isoformat()} > {split_generated_at.isoformat()})"
+                )
+
+    if stale_reasons:
+        details = "\n".join(f"- {reason}" for reason in stale_reasons)
+        raise SystemExit(
+            "Dataset splits are stale. Run `uv run milady build-dataset` before training.\n"
+            f"{details}"
+        )
+
+
+def parse_timestamp(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def init_wandb(
