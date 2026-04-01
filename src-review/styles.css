@@ -271,8 +271,10 @@ a {
 
 .batch-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  --batch-tile-size: clamp(140px, calc((100vh - 320px) / 3), 240px);
+  grid-template-columns: repeat(3, minmax(0, var(--batch-tile-size)));
   gap: 10px;
+  justify-content: start;
 }
 
 .batch-tile {
