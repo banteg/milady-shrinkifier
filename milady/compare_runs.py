@@ -17,7 +17,6 @@ from .wire import (
     RunSummary,
     SplitManifest,
     dump_json,
-    encode_json,
     load_json,
 )
 
@@ -145,7 +144,7 @@ def run_compare(
         )
         summary_output = resolved_output_dir / "summary.json"
         dump_json(summary_output, results)
-        print(encode_json(results, pretty=True).decode("utf-8"))
+        print(format_compare_report(results))
         print(f"[saved] {summary_output}")
         return results, summary_output
     finally:
@@ -304,6 +303,151 @@ def diagnostic_metrics_by(entries, probabilities: list[float], threshold: float)
             )
         diagnostics[group_name] = grouped_metrics
     return diagnostics
+
+
+def format_compare_report(results: CompareSummary) -> str:
+    baseline_run_id = results.run_ids[0]
+    baseline = results.runs[baseline_run_id]
+    lines = [
+        "",
+        f"Compare summary ({results.evaluation_policy.headline})",
+        f"Baseline: {baseline_run_id}",
+        "",
+        format_compare_table(results, baseline_run_id, baseline),
+    ]
+    return "\n".join(lines)
+
+
+def format_compare_table(
+    results: CompareSummary,
+    baseline_run_id: str,
+    baseline: CompareRunSummary,
+) -> str:
+    headers = [
+        "run",
+        "thr",
+        "val_p",
+        "val_r",
+        "test_p",
+        "Δp",
+        "test_r",
+        "Δr",
+        "fp",
+        "Δfp",
+        "fn",
+        "Δfn",
+        "verdict",
+    ]
+    rows = []
+    for run_id in results.run_ids:
+        run = results.runs[run_id]
+        rows.append(
+            [
+                run_id,
+                f"{run.threshold:.4f}",
+                f"{run.val_metrics.precision:.4f}",
+                f"{run.val_metrics.recall:.4f}",
+                f"{run.test_metrics.precision:.4f}",
+                metric_delta(run.test_metrics.precision, baseline.test_metrics.precision, higher_is_better=True),
+                f"{run.test_metrics.recall:.4f}",
+                metric_delta(run.test_metrics.recall, baseline.test_metrics.recall, higher_is_better=True),
+                str(run.false_positive_count),
+                count_delta(run.false_positive_count, baseline.false_positive_count, lower_is_better=True),
+                str(run.false_negative_count),
+                count_delta(run.false_negative_count, baseline.false_negative_count, lower_is_better=True),
+                compare_verdict(run_id, run, baseline_run_id, baseline),
+            ]
+        )
+    widths = [
+        max(len(headers[index]), max(len(str(row[index])) for row in rows))
+        for index in range(len(headers))
+    ]
+    line_parts = []
+    line_parts.append("  ".join(header.ljust(widths[index]) for index, header in enumerate(headers)))
+    line_parts.append("  ".join("-" * widths[index] for index in range(len(headers))))
+    for row in rows:
+        line_parts.append("  ".join(str(value).ljust(widths[index]) for index, value in enumerate(row)))
+    return "\n".join(line_parts)
+
+
+def metric_delta(current: float, baseline: float, *, higher_is_better: bool) -> str:
+    if abs(current - baseline) < 1e-9:
+        return "="
+    delta = current - baseline
+    if higher_is_better:
+        direction = "↑" if delta > 0 else "↓"
+    else:
+        direction = "↓" if delta < 0 else "↑"
+    return f"{direction}{abs(delta):.4f}"
+
+
+def count_delta(current: int, baseline: int, *, lower_is_better: bool) -> str:
+    if current == baseline:
+        return "="
+    delta = current - baseline
+    if lower_is_better:
+        direction = "↓" if delta < 0 else "↑"
+    else:
+        direction = "↑" if delta > 0 else "↓"
+    return f"{direction}{abs(delta)}"
+
+
+def compare_verdict(
+    run_id: str,
+    run: CompareRunSummary,
+    baseline_run_id: str,
+    baseline: CompareRunSummary,
+) -> str:
+    if run_id == baseline_run_id:
+        return "baseline"
+
+    comparisons: list[tuple[bool, bool]] = [
+        (
+            run.test_metrics.precision >= baseline.test_metrics.precision,
+            run.test_metrics.precision > baseline.test_metrics.precision,
+        ),
+        (
+            run.test_metrics.recall >= baseline.test_metrics.recall,
+            run.test_metrics.recall > baseline.test_metrics.recall,
+        ),
+        (
+            run.false_positive_count <= baseline.false_positive_count,
+            run.false_positive_count < baseline.false_positive_count,
+        ),
+        (
+            run.false_negative_count <= baseline.false_negative_count,
+            run.false_negative_count < baseline.false_negative_count,
+        ),
+    ]
+    all_non_worse = all(non_worse for non_worse, _ in comparisons)
+    any_better = any(strict for _, strict in comparisons)
+
+    worse_comparisons: list[tuple[bool, bool]] = [
+        (
+            run.test_metrics.precision <= baseline.test_metrics.precision,
+            run.test_metrics.precision < baseline.test_metrics.precision,
+        ),
+        (
+            run.test_metrics.recall <= baseline.test_metrics.recall,
+            run.test_metrics.recall < baseline.test_metrics.recall,
+        ),
+        (
+            run.false_positive_count >= baseline.false_positive_count,
+            run.false_positive_count > baseline.false_positive_count,
+        ),
+        (
+            run.false_negative_count >= baseline.false_negative_count,
+            run.false_negative_count > baseline.false_negative_count,
+        ),
+    ]
+    all_non_better = all(non_better for non_better, _ in worse_comparisons)
+    any_worse = any(strict for _, strict in worse_comparisons)
+
+    if all_non_worse and any_better:
+        return "better"
+    if all_non_better and any_worse:
+        return "worse"
+    return "mixed"
 
 
 if __name__ == "__main__":
