@@ -2,7 +2,8 @@ from pathlib import Path
 
 from PIL import Image
 
-from milady.mobilenet_common import AvatarDataset, DatasetEntry, crop_variant_for_source
+from milady.dataset_runtime import AvatarDataset, DatasetEntry
+from milady.preprocess import crop_variant_for_source
 
 
 def test_crop_variant_for_source_matches_collection_policy() -> None:

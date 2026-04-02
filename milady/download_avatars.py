@@ -6,7 +6,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import httpx
 import msgspec
 
-from .pipeline_common import AVATAR_ROOT, connect_db, guess_extension, inspect_image_bytes, now_iso, sha256_bytes
+from .catalog_db import connect_db
+from .image_files import guess_extension, inspect_image_bytes, sha256_bytes
+from .paths import AVATAR_ROOT, now_iso
 
 
 class DownloadResult(msgspec.Struct, kw_only=True):

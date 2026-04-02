@@ -11,8 +11,11 @@ import numpy as np
 import torch
 from PIL import Image
 
-from .mobilenet_common import create_model, find_latest_run_id, prepare_base_image, score_logits_to_probabilities, tensor_from_variant_array
-from .pipeline_common import MODEL_RUN_ROOT, convert_image_to_rgb
+from .image_files import convert_image_to_rgb
+from .inference import find_latest_run_id
+from .modeling import create_model, score_logits_to_probabilities
+from .paths import MODEL_RUN_ROOT
+from .preprocess import prepare_base_image, tensor_from_variant_array
 from .wire import CheckPfpResult, RunSummary, encode_json, load_json
 
 
@@ -78,6 +81,8 @@ def main() -> None:
             pretty=True,
         ).decode("utf-8")
     )
+
+
 def normalize_profile_image_url(url: str) -> str:
     return re.sub(
         r"_(normal|bigger|mini|reasonably_small|(?:\d+x\d+)|(?:x\d+))(\.[a-z0-9]+)$",

@@ -7,8 +7,8 @@ from pathlib import Path
 import onnx
 import torch
 
-from .mobilenet_common import CLASS_NAMES, ExportWrapper, MODEL_IMAGE_SIZE, MODEL_MEAN, MODEL_STD, POSITIVE_INDEX, create_model
-from .pipeline_common import MODEL_RUN_ROOT, PUBLIC_METADATA_PATH, PUBLIC_MODEL_PATH
+from .modeling import CLASS_NAMES, ExportWrapper, MODEL_IMAGE_SIZE, MODEL_MEAN, MODEL_STD, POSITIVE_INDEX, create_model
+from .paths import MODEL_RUN_ROOT, PUBLIC_METADATA_PATH, PUBLIC_MODEL_PATH
 from .wire import PublicModelMetadata, RunSummary, dump_json, encode_json, load_json
 
 

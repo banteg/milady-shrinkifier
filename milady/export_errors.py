@@ -5,7 +5,7 @@ import os
 import shutil
 from pathlib import Path
 
-from .pipeline_common import MODEL_COMPARE_ROOT
+from .paths import MODEL_COMPARE_ROOT
 from .wire import CompareErrorItem, CompareSummary, dump_json, load_json
 
 

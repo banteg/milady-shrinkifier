@@ -14,20 +14,10 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from .mobilenet_common import MANUAL_LABEL_SOURCE
-from .pipeline_common import (
-    CATALOG_PATH,
-    LABELS,
-    LABELED_GRID_FILTERS,
-    REVIEW_QUEUES,
-    ReviewItem,
-    connect_db,
-    labeled_grid_items,
-    load_review_items,
-    load_review_run_ids,
-    queue_items,
-    resolve_repo_path,
-)
+from .catalog_db import connect_db
+from .dataset_runtime import MANUAL_LABEL_SOURCE
+from .paths import CATALOG_PATH, resolve_repo_path
+from .review_data import LABELS, LABELED_GRID_FILTERS, REVIEW_QUEUES, labeled_grid_items, load_review_items, load_review_run_ids, queue_items
 from .wire import (
     ReviewBatchLabelRequest,
     ReviewBatchLabelResponse,
@@ -36,6 +26,7 @@ from .wire import (
     ReviewGridPayload,
     ReviewHistoryEntry,
     ReviewHistoryPayload,
+    ReviewItem,
     ReviewItemResponse,
     ReviewLabelRequest,
     ReviewQueuePayload,

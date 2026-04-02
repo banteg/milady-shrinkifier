@@ -12,24 +12,24 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader
 
-from .mobilenet_common import (
+from .dataset_runtime import (
     AvatarDataset,
-    CLASS_NAMES,
     DatasetEntry,
     HEADLINE_EVAL_POLICY,
+    load_dataset_entries,
+)
+from .inference import choose_device, evaluate_entries
+from .metrics import choose_threshold, compute_metrics, diagnostic_metrics_by
+from .modeling import (
+    CLASS_NAMES,
     MODEL_IMAGE_SIZE,
     MODEL_MEAN,
     MODEL_STD,
     POSITIVE_INDEX,
-    choose_device,
-    choose_threshold,
-    compute_metrics,
     create_model,
-    diagnostic_metrics_by,
-    evaluate_entries,
-    load_dataset_entries,
 )
-from .pipeline_common import COLLECTION_MANIFEST_PATH, MODEL_RUN_ROOT, SPLIT_MANIFEST_PATH, SPLIT_ROOT, connect_db, connect_offline_cache_db
+from .catalog_db import connect_db, connect_offline_cache_db
+from .paths import COLLECTION_MANIFEST_PATH, MODEL_RUN_ROOT, SPLIT_MANIFEST_PATH, SPLIT_ROOT
 from .wire import CollectionManifest, MetricSummary, RunDatasetSplitSummary, RunHistoryEntry, RunSummary, SplitManifest, dump_json, encode_json, load_json
 
 

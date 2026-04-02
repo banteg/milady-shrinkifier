@@ -11,7 +11,8 @@ from pathlib import Path
 import httpx
 import msgspec
 
-from .pipeline_common import COLLECTION_MANIFEST_PATH, COLLECTION_ROOT, guess_extension
+from .image_files import guess_extension
+from .paths import COLLECTION_MANIFEST_PATH, COLLECTION_ROOT
 from .wire import CollectionFailure, CollectionManifest, CollectionManifestCollection, CollectionSample, decode_json, dump_json
 
 IPFS_GATEWAYS = (
