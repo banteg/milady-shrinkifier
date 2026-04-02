@@ -90,10 +90,6 @@ class CollectionSample(msgspec.Struct, kw_only=True):
     metadata_url: str | None = None
 
 
-class CollectionMetadataPayload(msgspec.Struct, kw_only=True):
-    image: str
-
-
 class CollectionFailure(msgspec.Struct, kw_only=True):
     token_id: int
     error: str
