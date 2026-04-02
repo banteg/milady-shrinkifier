@@ -54,7 +54,6 @@ class AvatarDataset(Dataset[tuple[torch.Tensor, int, float]]):
         self.augment = augment
         self.to_tensor = transforms.Compose(
             [
-                transforms.Resize((MODEL_IMAGE_SIZE, MODEL_IMAGE_SIZE)),
                 transforms.ToTensor(),
                 transforms.Normalize(mean=MODEL_MEAN, std=MODEL_STD),
             ]
@@ -69,7 +68,14 @@ class AvatarDataset(Dataset[tuple[torch.Tensor, int, float]]):
             prepared = convert_image_to_rgb(image)
             if self.training and self.augment:
                 prepared = apply_training_augment(prepared)
-            tensor = self.to_tensor(prepared)
+                tensor = self.to_tensor(prepared)
+            elif self.training:
+                center = prepare_inference_variant_array(prepared, "center")
+                top = prepare_inference_variant_array(prepared, "top")
+                tensor = variants_tensor_from_arrays(center, top)
+            else:
+                prepared = prepare_training_base_image(prepared, training=False)
+                tensor = self.to_tensor(prepared)
         label_index = POSITIVE_INDEX if entry.label == POSITIVE_LABEL else 0
         return tensor, label_index, float(entry.sample_weight)
 
@@ -91,6 +97,20 @@ class ExportWrapper(nn.Module):
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         logits = self.model(inputs)
         return self.softmax(logits)
+
+
+def prepare_training_base_image(image: Image.Image, *, training: bool) -> Image.Image:
+    if training:
+        centering = (0.5, 0.0) if random.random() < 0.5 else (0.5, 0.5)
+    else:
+        centering = (0.5, 0.5)
+    return ImageOps.fit(
+        image,
+        (MODEL_IMAGE_SIZE, MODEL_IMAGE_SIZE),
+        method=Image.Resampling.BICUBIC,
+        centering=centering,
+    )
+
 
 
 def apply_training_augment(image: Image.Image) -> Image.Image:

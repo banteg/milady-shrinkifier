@@ -54,11 +54,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=1337)
     parser.add_argument("--num-workers", type=int, default=default_num_workers())
     parser.add_argument("--prefetch-factor", type=int, default=4)
-    parser.add_argument("--head-warmup-epochs", type=int, default=2)
+    parser.add_argument("--head-warmup-epochs", type=int, default=1)
     parser.add_argument("--scheduler", choices=("onecycle", "cosine", "off"), default="cosine")
     parser.add_argument("--head-learning-rate", type=float, help="Optional LR for classifier-head warmup. Defaults to learning rate.")
-    parser.add_argument("--label-smoothing", type=float, default=0.02)
-    parser.add_argument("--augment", choices=("on", "off"), default="on")
+    parser.add_argument("--label-smoothing", type=float, default=0.01)
+    parser.add_argument("--augment", choices=("on", "off"), default="off")
     parser.add_argument("--log-every", type=int, default=25, help="Print a batch progress update every N training steps.")
     parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
@@ -575,6 +575,16 @@ def set_backbone_batchnorm_mode(model: nn.Module, *, frozen: bool) -> None:
             module.eval() if frozen else module.train()
 
 
+def training_logits_from_batch(model: nn.Module, inputs: torch.Tensor) -> torch.Tensor:
+    if inputs.ndim != 5:
+        return model(inputs)
+    batch_size, view_count, channels, height, width = inputs.shape
+    flat_inputs = inputs.reshape(batch_size * view_count, channels, height, width)
+    flat_logits = model(flat_inputs)
+    return flat_logits.reshape(batch_size, view_count, -1).mean(dim=1)
+
+
+
 def run_epoch(
     model: nn.Module,
     loader: DataLoader,
@@ -600,7 +610,7 @@ def run_epoch(
         labels = labels.to(device)
         sample_weights = sample_weights.to(device=device, dtype=torch.float32)
         optimizer.zero_grad(set_to_none=True)
-        logits = model(inputs)
+        logits = training_logits_from_batch(model, inputs)
         loss_values = criterion(logits, labels)
         loss = (loss_values * sample_weights).sum() / sample_weights.sum().clamp_min(1e-8)
         loss.backward()
