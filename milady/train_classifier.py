@@ -575,14 +575,21 @@ def set_backbone_batchnorm_mode(model: nn.Module, *, frozen: bool) -> None:
             module.eval() if frozen else module.train()
 
 
-def training_logits_from_batch(model: nn.Module, inputs: torch.Tensor) -> torch.Tensor:
+def training_loss_values_from_batch(
+    model: nn.Module,
+    inputs: torch.Tensor,
+    labels: torch.Tensor,
+    criterion: nn.Module,
+) -> torch.Tensor:
     if inputs.ndim != 5:
-        return model(inputs)
+        logits = model(inputs)
+        return criterion(logits, labels)
+
     batch_size, view_count, channels, height, width = inputs.shape
     flat_inputs = inputs.reshape(batch_size * view_count, channels, height, width)
-    flat_logits = model(flat_inputs)
-    return flat_logits.reshape(batch_size, view_count, -1).mean(dim=1)
-
+    flat_labels = labels.repeat_interleave(view_count)
+    flat_loss_values = criterion(model(flat_inputs), flat_labels)
+    return flat_loss_values.reshape(batch_size, view_count).mean(dim=1)
 
 
 def run_epoch(
@@ -610,8 +617,7 @@ def run_epoch(
         labels = labels.to(device)
         sample_weights = sample_weights.to(device=device, dtype=torch.float32)
         optimizer.zero_grad(set_to_none=True)
-        logits = training_logits_from_batch(model, inputs)
-        loss_values = criterion(logits, labels)
+        loss_values = training_loss_values_from_batch(model, inputs, labels, criterion)
         loss = (loss_values * sample_weights).sum() / sample_weights.sum().clamp_min(1e-8)
         loss.backward()
         optimizer.step()
