@@ -55,7 +55,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-workers", type=int, default=default_num_workers())
     parser.add_argument("--prefetch-factor", type=int, default=4)
     parser.add_argument("--head-warmup-epochs", type=int, default=1)
-    parser.add_argument("--scheduler", choices=("onecycle", "cosine", "off"), default="cosine")
+    parser.add_argument("--scheduler", choices=("cosine", "off"), default="cosine")
     parser.add_argument("--head-learning-rate", type=float, help="Optional LR for classifier-head warmup. Defaults to learning rate.")
     parser.add_argument("--label-smoothing", type=float, default=0.01)
     parser.add_argument("--log-every", type=int, default=25, help="Print a batch progress update every N training steps.")
@@ -286,7 +286,6 @@ def main() -> None:
             label_smoothing=args.label_smoothing,
             evaluation_policy=RunEvaluationPolicy(
                 headline="refit_train_plus_val_with_test_selection" if args.refit else HEADLINE_EVAL_POLICY,
-                train_includes_trusted_synthetic=True,
             ),
             dataset_splits={
                 "train": split_summary(train_entries),
@@ -547,16 +546,6 @@ def create_scheduler(
     total_steps = max(1, steps_per_epoch * epochs)
     if scheduler_name == "off" or epochs <= 0:
         return None
-    if scheduler_name == "onecycle":
-        return torch.optim.lr_scheduler.OneCycleLR(
-            optimizer,
-            max_lr=learning_rate,
-            total_steps=total_steps,
-            pct_start=0.1,
-            anneal_strategy="cos",
-            div_factor=25.0,
-            final_div_factor=1e4,
-        )
     return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps)
 
 

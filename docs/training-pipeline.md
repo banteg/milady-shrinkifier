@@ -195,7 +195,7 @@ The builder:
 
 - loads exported avatars and collection positives
 - computes or reuses cached fingerprints
-- groups exact and near-duplicate images together
+- groups exact duplicate images together
 - assigns stable train/validation/test splits
 - writes JSONL files under `cache/dataset/splits/`
 

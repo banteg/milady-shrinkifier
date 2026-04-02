@@ -138,12 +138,8 @@ class SplitManifestEvaluationPolicy(msgspec.Struct, kw_only=True):
     gold_label_source: str
     trusted_label_sources: list[str]
     trusted_collection_weight: float
-    model_label_weight: float
     collection_blind_holdout_val_count: int
     collection_blind_holdout_test_count: int
-    hard_example_run_id: str | None = None
-    hard_example_proximity_scale: float = 0.0
-    hard_example_disagreement_bonus: float = 0.0
 
 
 class SplitManifestRatios(msgspec.Struct, kw_only=True):
@@ -212,8 +208,6 @@ class DiagnosticBucket(msgspec.Struct, kw_only=True):
 
 class RunEvaluationPolicy(msgspec.Struct, omit_defaults=True, kw_only=True):
     headline: str = "legacy"
-    train_includes_trusted_synthetic: bool | None = None
-    train_includes_weak_labels: bool | None = None
 
 
 class RunDatasetSplitSummary(msgspec.Struct, kw_only=True):
@@ -253,7 +247,6 @@ class RunSummary(msgspec.Struct, omit_defaults=True, kw_only=True):
     head_learning_rate: float = 0.0
     learning_rate: float = 0.0
     label_smoothing: float = 0.0
-    augment: bool = False
     evaluation_policy: RunEvaluationPolicy = msgspec.field(default_factory=RunEvaluationPolicy)
     dataset_splits: dict[str, RunDatasetSplitSummary] = msgspec.field(default_factory=dict)
     best_epoch: int

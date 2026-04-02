@@ -11,7 +11,6 @@ from .download_collection_samples import COLLECTIONS as NFT_COLLECTIONS, COLLECT
 from .mobilenet_common import DatasetEntry, SPLIT_SEED, dataset_entries_to_jsonl
 from .pipeline_common import (
     COLLECTION_MANIFEST_PATH,
-    MODEL_RUN_ROOT,
     SPLIT_MANIFEST_PATH,
     SPLIT_ROOT,
     connect_db,
@@ -23,7 +22,6 @@ from .pipeline_common import (
 )
 from .wire import (
     CollectionManifest,
-    RunSummary,
     SplitManifest,
     SplitManifestCanonical,
     SplitManifestEvaluationPolicy,
@@ -45,7 +43,6 @@ LABEL_TIER_PRIORITY = {
     "trusted": 1,
 }
 TRUSTED_COLLECTION_WEIGHT = 0.5
-DEFAULT_MODEL_LABEL_WEIGHT = 1.0
 GOLD_LABEL_SOURCE = "manual"
 MODEL_LABEL_SOURCE = "model"
 TRUSTED_LABEL_SOURCES = {MODEL_LABEL_SOURCE}
@@ -106,11 +103,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--train-ratio", type=float, default=0.8)
     parser.add_argument("--val-ratio", type=float, default=0.1)
     parser.add_argument("--test-ratio", type=float, default=0.1)
-    parser.add_argument("--model-label-weight", type=float, default=DEFAULT_MODEL_LABEL_WEIGHT)
     parser.add_argument("--collection-weight", type=float, default=TRUSTED_COLLECTION_WEIGHT)
-    parser.add_argument("--hard-example-run-id", help="Optional scored run id used to upweight boundary/disagreement exported samples.")
-    parser.add_argument("--hard-example-proximity-scale", type=float, default=0.0)
-    parser.add_argument("--hard-example-disagreement-bonus", type=float, default=0.0)
     parser.add_argument("--reset-splits", action="store_true", help="Recompute all split assignments from scratch.")
     return parser.parse_args()
 
@@ -124,11 +117,7 @@ def main() -> None:
         samples = build_sample_records(
             connection,
             cache_connection,
-            model_label_weight=args.model_label_weight,
             collection_weight=args.collection_weight,
-            hard_example_run_id=args.hard_example_run_id,
-            hard_example_proximity_scale=args.hard_example_proximity_scale,
-            hard_example_disagreement_bonus=args.hard_example_disagreement_bonus,
         )
         print(f"[build-dataset] collected {len(samples)} samples", flush=True)
         print("[build-dataset] grouping duplicates", flush=True)
@@ -242,12 +231,8 @@ def main() -> None:
                     gold_label_source=GOLD_LABEL_SOURCE,
                     trusted_label_sources=sorted(TRUSTED_LABEL_SOURCES),
                     trusted_collection_weight=args.collection_weight,
-                    model_label_weight=args.model_label_weight,
                     collection_blind_holdout_val_count=COLLECTION_HOLDOUT_VAL_COUNT,
                     collection_blind_holdout_test_count=COLLECTION_HOLDOUT_TEST_COUNT,
-                    hard_example_run_id=args.hard_example_run_id,
-                    hard_example_proximity_scale=args.hard_example_proximity_scale,
-                    hard_example_disagreement_bonus=args.hard_example_disagreement_bonus,
                 ),
                 ratios=SplitManifestRatios(
                     train=args.train_ratio,
@@ -275,15 +260,10 @@ def build_sample_records(
     connection,
     cache_connection,
     *,
-    model_label_weight: float,
     collection_weight: float,
-    hard_example_run_id: str | None,
-    hard_example_proximity_scale: float,
-    hard_example_disagreement_bonus: float,
 ) -> list[SampleRecord]:
     samples: list[SampleRecord] = []
     processed = 0
-    hard_example_scores, hard_example_threshold = load_hard_example_context(connection, hard_example_run_id)
 
     for collection, token_id, path in load_collection_rows():
         fingerprint = get_file_fingerprint(cache_connection, path, 128)
@@ -325,16 +305,6 @@ def build_sample_records(
         if not fingerprint.readable:
             raise SystemExit(f"Unreadable exported avatar file: {path}")
         label_tier = label_tier_for_export_label_source(label_source)
-        sample_weight = sample_weight_for_export_label_source(label_source, model_label_weight)
-        if hard_example_threshold is not None:
-            sample_weight *= hard_example_multiplier(
-                label=str(row["label"]),
-                exported_sha=str(row["sha256"]),
-                scores_by_sha=hard_example_scores,
-                threshold=hard_example_threshold,
-                proximity_scale=hard_example_proximity_scale,
-                disagreement_bonus=hard_example_disagreement_bonus,
-            )
         samples.append(
             SampleRecord(
                 sample_id=f"export:{row['sha256']}",
@@ -345,7 +315,7 @@ def build_sample_records(
                 pixel_digest=fingerprint.pixel_digest,
                 label_source=label_source,
                 label_tier=label_tier,
-                sample_weight=sample_weight,
+                sample_weight=1.0,
                 blind_eval_eligible=label_tier == "gold",
                 exported_sha=str(row["sha256"]),
             )
@@ -354,49 +324,6 @@ def build_sample_records(
 
     cache_connection.commit()
     return samples
-
-
-def load_hard_example_context(connection, run_id: str | None) -> tuple[dict[str, float], float | None]:
-    if run_id is None:
-        return {}, None
-
-    summary_path = MODEL_RUN_ROOT / run_id / "summary.json"
-    if not summary_path.exists():
-        raise SystemExit(f"Missing run summary for hard-example weighting: {summary_path}")
-    summary = load_json(summary_path, RunSummary)
-    rows = connection.execute(
-        """
-        SELECT image_sha256, score
-        FROM model_scores
-        WHERE run_id = ?
-        """,
-        (run_id,),
-    ).fetchall()
-    if not rows:
-        raise SystemExit(f"No model_scores found for hard-example run: {run_id}")
-    return ({str(row["image_sha256"]): float(row["score"]) for row in rows}, float(summary.threshold))
-
-
-def hard_example_multiplier(
-    *,
-    label: str,
-    exported_sha: str,
-    scores_by_sha: dict[str, float],
-    threshold: float,
-    proximity_scale: float,
-    disagreement_bonus: float,
-) -> float:
-    score = scores_by_sha.get(exported_sha)
-    if score is None:
-        return 1.0
-
-    side_range = max(threshold, 1e-6) if score < threshold else max(1.0 - threshold, 1e-6)
-    normalized_distance = min(1.0, abs(score - threshold) / side_range)
-    boundary_proximity = 1.0 - normalized_distance
-    predicted_positive = score >= threshold
-    label_positive = label == "milady"
-    disagreement = 1.0 if predicted_positive != label_positive else 0.0
-    return 1.0 + proximity_scale * boundary_proximity + disagreement_bonus * disagreement
 
 
 def load_collection_rows() -> list[tuple[object, int, Path]]:
@@ -609,12 +536,6 @@ def label_tier_for_export_label_source(label_source: str) -> str:
     if label_source in TRUSTED_LABEL_SOURCES:
         return "trusted"
     raise SystemExit(f"Unsupported exported label source for dataset build: {label_source}")
-
-
-def sample_weight_for_export_label_source(label_source: str, model_label_weight: float) -> float:
-    if label_source in TRUSTED_LABEL_SOURCES:
-        return model_label_weight
-    return 1.0
 
 
 def sample_sort_key(sample: SampleRecord) -> tuple[int, str]:
