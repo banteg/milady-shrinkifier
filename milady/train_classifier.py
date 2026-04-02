@@ -54,11 +54,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=1337)
     parser.add_argument("--num-workers", type=int, default=default_num_workers())
     parser.add_argument("--prefetch-factor", type=int, default=4)
-    parser.add_argument("--head-warmup-epochs", type=int, default=2)
+    parser.add_argument("--head-warmup-epochs", type=int, default=1)
     parser.add_argument("--scheduler", choices=("onecycle", "cosine", "off"), default="cosine")
     parser.add_argument("--head-learning-rate", type=float, help="Optional LR for classifier-head warmup. Defaults to learning rate.")
-    parser.add_argument("--label-smoothing", type=float, default=0.02)
-    parser.add_argument("--augment", choices=("on", "off"), default="on")
+    parser.add_argument("--label-smoothing", type=float, default=0.01)
     parser.add_argument("--log-every", type=int, default=25, help="Print a batch progress update every N training steps.")
     parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
@@ -95,7 +94,7 @@ def main() -> None:
     finetune_epochs = max(0, args.epochs - head_warmup_epochs)
     head_learning_rate = args.head_learning_rate if args.head_learning_rate is not None else args.learning_rate
     train_loader = DataLoader(
-        AvatarDataset(train_entries, training=True, augment=args.augment == "on"),
+        AvatarDataset(train_entries, training=True),
         batch_size=args.batch_size,
         shuffle=True,
         generator=build_loader_generator(args.seed),
@@ -281,7 +280,7 @@ def main() -> None:
             head_learning_rate=head_learning_rate,
             learning_rate=args.learning_rate,
             label_smoothing=args.label_smoothing,
-            augment=args.augment == "on",
+            augment=False,
             evaluation_policy=RunEvaluationPolicy(
                 headline=HEADLINE_EVAL_POLICY,
                 train_includes_trusted_synthetic=True,
@@ -433,7 +432,7 @@ def init_wandb(
         "log_every": args.log_every,
         "learning_rate": args.learning_rate,
         "label_smoothing": args.label_smoothing,
-        "augment": args.augment == "on",
+        "augment": False,
         "weight_decay": args.weight_decay,
         "patience": args.patience,
         "precision_floor": args.precision_floor,
@@ -575,6 +574,23 @@ def set_backbone_batchnorm_mode(model: nn.Module, *, frozen: bool) -> None:
             module.eval() if frozen else module.train()
 
 
+def training_loss_values_from_batch(
+    model: nn.Module,
+    inputs: torch.Tensor,
+    labels: torch.Tensor,
+    criterion: nn.Module,
+) -> torch.Tensor:
+    if inputs.ndim != 5:
+        logits = model(inputs)
+        return criterion(logits, labels)
+
+    batch_size, view_count, channels, height, width = inputs.shape
+    flat_inputs = inputs.reshape(batch_size * view_count, channels, height, width)
+    flat_labels = labels.repeat_interleave(view_count)
+    flat_loss_values = criterion(model(flat_inputs), flat_labels)
+    return flat_loss_values.reshape(batch_size, view_count).mean(dim=1)
+
+
 def run_epoch(
     model: nn.Module,
     loader: DataLoader,
@@ -600,8 +616,7 @@ def run_epoch(
         labels = labels.to(device)
         sample_weights = sample_weights.to(device=device, dtype=torch.float32)
         optimizer.zero_grad(set_to_none=True)
-        logits = model(inputs)
-        loss_values = criterion(logits, labels)
+        loss_values = training_loss_values_from_batch(model, inputs, labels, criterion)
         loss = (loss_values * sample_weights).sum() / sample_weights.sum().clamp_min(1e-8)
         loss.backward()
         optimizer.step()
@@ -674,7 +689,7 @@ def print_run_header(
         f"weight_decay={args.weight_decay:g} patience={args.patience} precision_floor={args.precision_floor:.4f} "
         f"seed={args.seed} "
         f"warmup_epochs={head_warmup_epochs} head_lr={head_learning_rate:g} "
-        f"scheduler={args.scheduler} label_smoothing={args.label_smoothing:g} augment={args.augment}",
+        f"scheduler={args.scheduler} label_smoothing={args.label_smoothing:g} augment=off",
         flush=True,
     )
     print(
