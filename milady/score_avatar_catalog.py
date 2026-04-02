@@ -93,6 +93,7 @@ def main() -> None:
             probabilities = probabilities_from_model(
                 model,
                 batch_paths,
+                ["export"] * len(batch_paths),
                 device,
                 batch_size=max(1, args.batch_size),
                 connection=cache_connection,

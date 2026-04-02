@@ -333,6 +333,7 @@ def evaluate(
     probabilities = probabilities_from_model(
         model,
         [entry.path for entry in entries],
+        [entry.source for entry in entries],
         device,
         batch_size=batch_size,
         connection=cache_connection,

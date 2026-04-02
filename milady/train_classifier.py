@@ -580,15 +580,8 @@ def training_loss_values_from_batch(
     labels: torch.Tensor,
     criterion: nn.Module,
 ) -> torch.Tensor:
-    if inputs.ndim != 5:
-        logits = model(inputs)
-        return criterion(logits, labels)
-
-    batch_size, view_count, channels, height, width = inputs.shape
-    flat_inputs = inputs.reshape(batch_size * view_count, channels, height, width)
-    flat_labels = labels.repeat_interleave(view_count)
-    flat_loss_values = criterion(model(flat_inputs), flat_labels)
-    return flat_loss_values.reshape(batch_size, view_count).mean(dim=1)
+    logits = model(inputs)
+    return criterion(logits, labels)
 
 
 def run_epoch(
@@ -662,6 +655,7 @@ def evaluate(
     probabilities = probabilities_from_model(
         model,
         [entry.path for entry in entries],
+        [entry.source for entry in entries],
         device,
         batch_size=batch_size,
         connection=cache_connection,
