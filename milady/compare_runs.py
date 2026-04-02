@@ -6,11 +6,23 @@ from pathlib import Path
 
 import torch
 
-from .mobilenet_common import DatasetEntry, choose_threshold, compute_metrics, create_model, load_dataset_entries, probabilities_from_model
+from .mobilenet_common import (
+    DatasetEntry,
+    HEADLINE_EVAL_POLICY,
+    MANUAL_LABEL_SOURCE,
+    choose_device,
+    choose_threshold,
+    compute_metrics,
+    create_model,
+    diagnostic_metrics_by,
+    evaluate_entries,
+    find_latest_run_id,
+    load_dataset_entries,
+    load_promoted_run_id,
+)
 from .pipeline_common import (
     MODEL_COMPARE_ROOT,
     MODEL_RUN_ROOT,
-    PUBLIC_METADATA_PATH,
     SPLIT_MANIFEST_PATH,
     SPLIT_ROOT,
     connect_offline_cache_db,
@@ -21,15 +33,11 @@ from .wire import (
     CompareRunSummary,
     CompareSummary,
     CompareSummaryEvaluationPolicy,
-    DiagnosticBucket,
-    PublicModelMetadata,
     RunSummary,
     SplitManifest,
     dump_json,
     load_json,
 )
-
-HEADLINE_EVAL_POLICY = "manual_export_gold_plus_collection_positive_holdout"
 ALL_MANUAL_EVAL_POLICY = "all_manual_export_labels"
 ALL_EXPORTED_EVAL_POLICY = "all_exported_labels"
 PROD_RELEASES: list[tuple[str, str]] = [
@@ -132,14 +140,14 @@ def run_compare(
             state = torch.load(checkpoint_path, map_location=device)
             model.load_state_dict(state)
 
-            val_probabilities, val_labels = evaluate(model, val_entries, device, batch_size, cache_connection)
+            val_probabilities, val_labels = evaluate_entries(model, val_entries, device, batch_size, cache_connection)
             threshold, val_metrics = choose_threshold(val_probabilities, val_labels, precision_floor)
             print(
                 f"[compare:{run_id}] validation done threshold={threshold:.4f} "
                 f"precision={val_metrics.precision:.4f} recall={val_metrics.recall:.4f}",
                 flush=True,
             )
-            test_probabilities, test_labels = evaluate(model, test_entries, device, batch_size, cache_connection)
+            test_probabilities, test_labels = evaluate_entries(model, test_entries, device, batch_size, cache_connection)
             test_metrics = compute_metrics(test_probabilities, test_labels, threshold)
 
             false_positives = collect_errors(test_entries, test_probabilities, test_labels, threshold, want_predicted=1, want_label=0)
@@ -198,7 +206,7 @@ def resolve_run_selection(args: argparse.Namespace) -> tuple[list[str], dict[str
         latest_wip = find_latest_wip_run()
         if latest_wip is None:
             raise SystemExit("No non-promoted work-in-progress run found.")
-        current_prod_run_id = load_current_promoted_run_id()
+        current_prod_run_id = load_promoted_run_id()
         releases = [("prod", current_prod_run_id), ("wip", latest_wip)]
         return [current_prod_run_id, latest_wip], {version: run_id for version, run_id in releases}
     return args.run_ids, None
@@ -234,27 +242,7 @@ def default_group_output_dir(group: str | None, eval_set: str) -> Path | None:
 
 def find_latest_wip_run() -> str | None:
     prod_run_ids = {run_id for _, run_id in PROD_RELEASES}
-    candidates: list[tuple[float, str]] = []
-    for run_dir in MODEL_RUN_ROOT.iterdir():
-        if not run_dir.is_dir():
-            continue
-        run_id = run_dir.name
-        if run_id in prod_run_ids:
-            continue
-        summary_path = run_dir / "summary.json"
-        checkpoint_path = run_dir / "best.pt"
-        if not summary_path.exists() or not checkpoint_path.exists():
-            continue
-        candidates.append((summary_path.stat().st_mtime, run_id))
-    if not candidates:
-        return None
-    candidates.sort(reverse=True)
-    return candidates[0][1]
-
-
-def load_current_promoted_run_id() -> str:
-    metadata = load_json(PUBLIC_METADATA_PATH, PublicModelMetadata)
-    return metadata.run_id
+    return find_latest_run_id(exclude=prod_run_ids)
 
 
 def print_releases(releases: dict[str, str]) -> None:
@@ -264,7 +252,7 @@ def print_releases(releases: dict[str, str]) -> None:
         print(f"  {label:<8} {run_id}")
 
 
-def load_evaluation_entries(eval_set: str) -> tuple[list, list, str]:
+def load_evaluation_entries(eval_set: str) -> tuple[list[DatasetEntry], list[DatasetEntry], str]:
     if eval_set == "blind":
         val_entries = load_dataset_entries(SPLIT_ROOT / "val.jsonl")
         test_entries = load_dataset_entries(SPLIT_ROOT / "test.jsonl")
@@ -279,10 +267,10 @@ def load_evaluation_entries(eval_set: str) -> tuple[list, list, str]:
 
 
 def load_all_manual_export_entries() -> list:
-    return load_all_exported_entries({"manual"})
+    return load_all_exported_entries({MANUAL_LABEL_SOURCE})
 
 
-def load_all_exported_entries(allowed_label_sources: set[str] | None = None) -> list:
+def load_all_exported_entries(allowed_label_sources: set[str] | None = None) -> list[DatasetEntry]:
     if not SPLIT_MANIFEST_PATH.exists():
         raise SystemExit("Missing split manifest. Run `uv run milady build-dataset` first.")
     manifest = load_json(SPLIT_MANIFEST_PATH, SplitManifest)
@@ -313,41 +301,15 @@ def load_all_exported_entries(allowed_label_sources: set[str] | None = None) -> 
     return entries
 
 
-def choose_device(force_cpu: bool) -> torch.device:
-    if force_cpu:
-        return torch.device("cpu")
-    if torch.backends.mps.is_available():
-        return torch.device("mps")
-    return torch.device("cpu")
-
-
-def evaluate(
-    model: torch.nn.Module,
-    entries: list,
-    device: torch.device,
-    batch_size: int = 64,
-    cache_connection=None,
-) -> tuple[list[float], list[int]]:
-    probabilities = probabilities_from_model(
-        model,
-        [entry.path for entry in entries],
-        [entry.source for entry in entries],
-        device,
-        batch_size=batch_size,
-        connection=cache_connection,
-    ).tolist()
-    labels = [1 if entry.label == "milady" else 0 for entry in entries]
-    return probabilities, labels
-
 def collect_errors(
-    entries,
+    entries: list[DatasetEntry],
     probabilities: list[float],
     labels: list[int],
     threshold: float,
     *,
     want_predicted: int,
     want_label: int,
-) -> list[dict[str, object]]:
+) -> list[CompareErrorItem]:
     items: list[CompareErrorItem] = []
     for entry, probability, label in zip(entries, probabilities, labels, strict=True):
         predicted = 1 if probability >= threshold else 0
@@ -368,36 +330,6 @@ def collect_errors(
             )
         )
     return items
-
-
-def diagnostic_metrics_by(entries, probabilities: list[float], threshold: float) -> dict[str, dict[str, DiagnosticBucket]]:
-    diagnostics: dict[str, dict[str, DiagnosticBucket]] = {}
-    group_fields = {
-        "source": "source",
-        "label_source": "label_source",
-        "label_tier": "label_tier",
-    }
-    for group_name, field_name in group_fields.items():
-        values = sorted({str(getattr(entry, field_name)) for entry in entries})
-        grouped_metrics: dict[str, DiagnosticBucket] = {}
-        for value in values:
-            indices = [
-                index
-                for index, entry in enumerate(entries)
-                if str(getattr(entry, field_name)) == value
-            ]
-            if not indices:
-                continue
-            grouped_metrics[value] = DiagnosticBucket(
-                count=len(indices),
-                metrics=compute_metrics(
-                    [probabilities[index] for index in indices],
-                    [1 if entries[index].label == "milady" else 0 for index in indices],
-                    threshold,
-                ),
-            )
-        diagnostics[group_name] = grouped_metrics
-    return diagnostics
 
 
 def format_compare_report(results: CompareSummary) -> str:

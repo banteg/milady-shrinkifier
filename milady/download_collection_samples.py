@@ -11,6 +11,7 @@ from pathlib import Path
 import httpx
 import msgspec
 
+from .mobilenet_common import COLLECTION_LABEL_SOURCE
 from .pipeline_common import COLLECTION_MANIFEST_PATH, COLLECTION_ROOT, guess_extension
 from .wire import CollectionFailure, CollectionManifest, CollectionManifestCollection, CollectionSample, dump_json
 
@@ -65,9 +66,6 @@ COLLECTIONS: tuple[CollectionSpec, ...] = (
         metadata_url_template="ipfs://bafybeigd7557iwardhnwg5kbmg2s7tmuxqkstjeoixu7wunooiywbb3jqq/{token_id}",
     ),
 )
-
-COLLECTION_LABEL_SOURCE = "collection_corpus"
-
 
 class DownloadResult(msgspec.Struct, kw_only=True):
     token_id: int
@@ -307,7 +305,9 @@ def fetch_head_candidate(client: httpx.Client, url: str) -> tuple[str, str]:
     raise ValueError("; ".join(errors))
 
 
-def extract_opensea_image_url(page_html: str, contract: str) -> str | None:
+def extract_opensea_image_url(page_html: str, contract: str | None) -> str | None:
+    if contract is None:
+        return None
     normalized_contract = contract.lower()
     pattern = re.compile(rf"https://i2c\.seadn\.io/ethereum/{re.escape(normalized_contract)}/[^\"' ]+")
     match = pattern.search(page_html)

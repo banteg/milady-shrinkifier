@@ -6,18 +6,15 @@ from pathlib import Path
 
 import torch
 
-from .mobilenet_common import probabilities_from_model, create_model
+from .mobilenet_common import MODEL_LABEL_SOURCE, choose_device, create_model, load_promoted_run_id, probabilities_from_model
 from .pipeline_common import (
     MODEL_RUN_ROOT,
-    PUBLIC_METADATA_PATH,
     connect_db,
     connect_offline_cache_db,
     now_iso,
     resolve_repo_path,
 )
-from .wire import PublicModelMetadata, RunSummary, encode_json, load_json
-
-MODEL_LABEL_SOURCE = "model"
+from .wire import RunSummary, encode_json, load_json
 
 
 def parse_args() -> argparse.Namespace:
@@ -224,12 +221,12 @@ def refresh_model_labels(
 
 
 def load_default_run_id() -> str:
-    if not PUBLIC_METADATA_PATH.exists():
+    try:
+        return load_promoted_run_id()
+    except FileNotFoundError as error:
         raise SystemExit(
             "No default promoted model metadata found. Pass --run-id explicitly or export a promoted model first."
-        )
-    payload = load_json(PUBLIC_METADATA_PATH, PublicModelMetadata)
-    return payload.run_id
+        ) from error
 
 
 def validate_args(args: argparse.Namespace) -> None:
@@ -254,14 +251,5 @@ def build_model_label_payload(run_id: str, sha256: str, label: str, score: float
             sort_keys=True,
         ),
     }
-
-
-def choose_device(force_cpu: bool) -> torch.device:
-    if force_cpu:
-        return torch.device("cpu")
-    if torch.backends.mps.is_available():
-        return torch.device("mps")
-    return torch.device("cpu")
-
 if __name__ == "__main__":
     main()

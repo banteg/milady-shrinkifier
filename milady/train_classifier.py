@@ -16,32 +16,21 @@ from torch.utils.data import DataLoader
 from .mobilenet_common import (
     AvatarDataset,
     CLASS_NAMES,
+    HEADLINE_EVAL_POLICY,
     MODEL_IMAGE_SIZE,
     MODEL_MEAN,
     MODEL_STD,
     POSITIVE_INDEX,
+    choose_device,
     choose_threshold,
     compute_metrics,
     create_model,
+    diagnostic_metrics_by,
+    evaluate_entries,
     load_dataset_entries,
-    probabilities_from_model,
 )
 from .pipeline_common import COLLECTION_MANIFEST_PATH, MODEL_RUN_ROOT, SPLIT_MANIFEST_PATH, SPLIT_ROOT, connect_db, connect_offline_cache_db
-from .wire import (
-    CollectionManifest,
-    DiagnosticBucket,
-    MetricSummary,
-    RunDatasetSplitSummary,
-    RunEvaluationPolicy,
-    RunHistoryEntry,
-    RunSummary,
-    SplitManifest,
-    dump_json,
-    encode_json,
-    load_json,
-)
-
-HEADLINE_EVAL_POLICY = "manual_export_gold_plus_collection_positive_holdout"
+from .wire import CollectionManifest, MetricSummary, RunDatasetSplitSummary, RunEvaluationPolicy, RunHistoryEntry, RunSummary, SplitManifest, dump_json, encode_json, load_json
 
 DEFAULT_WANDB_PROJECT = "milady-shrinkifier"
 DEFAULT_WANDB_ENTITY = "banteg-"
@@ -174,7 +163,7 @@ def main() -> None:
                 scheduler,
                 phase,
             )
-            val_probabilities, val_labels = evaluate(model, val_entries, device, args.batch_size, cache_connection)
+            val_probabilities, val_labels = evaluate_entries(model, val_entries, device, args.batch_size, cache_connection)
             threshold, threshold_metrics = choose_threshold(val_probabilities, val_labels, args.precision_floor)
             epoch_duration_seconds = perf_counter() - epoch_started_at
             completed_epoch_durations.append(epoch_duration_seconds)
@@ -260,10 +249,10 @@ def main() -> None:
         print(f"[checkpoint] saved best weights to {checkpoint_path}", flush=True)
 
         model.load_state_dict(best_state)
-        val_probabilities, val_labels = evaluate(model, val_entries, device, args.batch_size, cache_connection)
+        val_probabilities, val_labels = evaluate_entries(model, val_entries, device, args.batch_size, cache_connection)
         best_threshold, best_val_metrics = choose_threshold(val_probabilities, val_labels, args.precision_floor)
         print("[test] evaluating best checkpoint on test split", flush=True)
-        test_probabilities, test_labels = evaluate(model, test_entries, device, args.batch_size, cache_connection)
+        test_probabilities, test_labels = evaluate_entries(model, test_entries, device, args.batch_size, cache_connection)
         test_metrics = compute_metrics(test_probabilities, test_labels, best_threshold)
 
         summary = RunSummary(
@@ -405,9 +394,9 @@ def parse_timestamp(value: str) -> datetime:
 def init_wandb(
     args: argparse.Namespace,
     device: torch.device,
-    train_entries: list,
-    val_entries: list,
-    test_entries: list,
+    train_entries: list[DatasetEntry],
+    val_entries: list[DatasetEntry],
+    test_entries: list[DatasetEntry],
     run_dir: Path,
     head_warmup_epochs: int,
     head_learning_rate: float,
@@ -474,14 +463,6 @@ def init_wandb(
     return run
 
 
-def choose_device(force_cpu: bool) -> torch.device:
-    if force_cpu:
-        return torch.device("cpu")
-    if torch.backends.mps.is_available():
-        return torch.device("mps")
-    return torch.device("cpu")
-
-
 def default_num_workers() -> int:
     cpu_count = os.cpu_count() or 1
     return max(1, min(4, cpu_count // 2))
@@ -520,7 +501,7 @@ def dataloader_kwargs(args: argparse.Namespace, device: torch.device) -> dict[st
     return kwargs
 
 
-def build_loss(train_entries: list, label_smoothing: float) -> nn.Module:
+def build_loss(train_entries: list[DatasetEntry], label_smoothing: float) -> nn.Module:
     positive_weight_total = sum(entry.sample_weight for entry in train_entries if entry.label == "milady")
     negative_weight_total = sum(entry.sample_weight for entry in train_entries if entry.label != "milady")
     positive_weight = negative_weight_total / max(1e-8, positive_weight_total)
@@ -542,7 +523,7 @@ def create_scheduler(
     learning_rate: float,
     steps_per_epoch: int,
     epochs: int,
-):
+) -> torch.optim.lr_scheduler.LRScheduler | None:
     total_steps = max(1, steps_per_epoch * epochs)
     if scheduler_name == "off" or epochs <= 0:
         return None
@@ -587,7 +568,7 @@ def run_epoch(
     log_every: int,
     wandb_run: wandb.sdk.wandb_run.Run | None,
     global_step_base: int,
-    scheduler,
+    scheduler: torch.optim.lr_scheduler.LRScheduler | None,
     phase: str,
 ) -> tuple[float, int]:
     model.train()
@@ -637,31 +618,12 @@ def run_epoch(
     return total_loss / max(1, total_items), global_step_base + total_batches
 
 
-def evaluate(
-    model: nn.Module,
-    entries: list,
-    device: torch.device,
-    batch_size: int = 64,
-    cache_connection=None,
-) -> tuple[list[float], list[int]]:
-    probabilities = probabilities_from_model(
-        model,
-        [entry.path for entry in entries],
-        [entry.source for entry in entries],
-        device,
-        batch_size=batch_size,
-        connection=cache_connection,
-    ).tolist()
-    labels = [1 if entry.label == "milady" else 0 for entry in entries]
-    return probabilities, labels
-
-
 def print_run_header(
     args: argparse.Namespace,
     device: torch.device,
-    train_entries: list,
-    val_entries: list,
-    test_entries: list,
+    train_entries: list[DatasetEntry],
+    val_entries: list[DatasetEntry],
+    test_entries: list[DatasetEntry],
     run_dir: Path,
     head_warmup_epochs: int,
     head_learning_rate: float,
@@ -747,37 +709,7 @@ def format_duration(seconds: float) -> str:
     return f"{secs}s"
 
 
-def diagnostic_metrics_by(entries: list, probabilities: list[float], threshold: float) -> dict[str, dict[str, DiagnosticBucket]]:
-    diagnostics: dict[str, dict[str, DiagnosticBucket]] = {}
-    group_fields = {
-        "source": "source",
-        "label_source": "label_source",
-        "label_tier": "label_tier",
-    }
-    for group_name, field_name in group_fields.items():
-        values = sorted({str(getattr(entry, field_name)) for entry in entries})
-        grouped_metrics: dict[str, DiagnosticBucket] = {}
-        for value in values:
-            indices = [
-                index
-                for index, entry in enumerate(entries)
-                if str(getattr(entry, field_name)) == value
-            ]
-            if not indices:
-                continue
-            grouped_metrics[value] = DiagnosticBucket(
-                count=len(indices),
-                metrics=compute_metrics(
-                    [probabilities[index] for index in indices],
-                    [1 if entries[index].label == "milady" else 0 for index in indices],
-                    threshold,
-                ),
-            )
-        diagnostics[group_name] = grouped_metrics
-    return diagnostics
-
-
-def split_summary(entries: list) -> RunDatasetSplitSummary:
+def split_summary(entries: list[DatasetEntry]) -> RunDatasetSplitSummary:
     return RunDatasetSplitSummary(
         total=len(entries),
         class_counts={
@@ -790,7 +722,7 @@ def split_summary(entries: list) -> RunDatasetSplitSummary:
     )
 
 
-def count_by(entries: list, attribute: str) -> dict[str, int]:
+def count_by(entries: list[DatasetEntry], attribute: str) -> dict[str, int]:
     values = sorted({str(getattr(entry, attribute)) for entry in entries})
     return {
         value: sum(1 for entry in entries if str(getattr(entry, attribute)) == value)

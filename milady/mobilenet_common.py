@@ -14,13 +14,15 @@ from torchvision import transforms
 from torchvision.models import MobileNet_V3_Small_Weights, mobilenet_v3_small
 
 from .pipeline_common import (
+    MODEL_RUN_ROOT,
+    PUBLIC_METADATA_PATH,
     connect_offline_cache_db,
     convert_image_to_rgb,
     get_file_fingerprint,
     inference_variant_cache_path,
     write_npz_atomic,
 )
-from .wire import DatasetEntryPayload, MetricSummary, dump_jsonl, load_jsonl
+from .wire import DatasetEntryPayload, DiagnosticBucket, MetricSummary, PublicModelMetadata, dump_jsonl, load_jsonl
 
 MODEL_IMAGE_SIZE = 128
 MODEL_MEAN = [0.485, 0.456, 0.406]
@@ -31,6 +33,10 @@ CLASS_NAMES = [NEGATIVE_LABEL, POSITIVE_LABEL]
 POSITIVE_INDEX = 1
 SPLIT_SEED = 1337
 TOP_CROP_SOURCES = frozenset({"milady-maker", "pixelady"})
+HEADLINE_EVAL_POLICY = "manual_export_gold_plus_collection_positive_holdout"
+MANUAL_LABEL_SOURCE = "manual"
+MODEL_LABEL_SOURCE = "model"
+COLLECTION_LABEL_SOURCE = "collection_corpus"
 
 
 class DatasetEntry(msgspec.Struct, kw_only=True):
@@ -210,6 +216,86 @@ def dataset_entries_to_jsonl(entries: list[DatasetEntry], path: Path) -> None:
             for entry in entries
         ],
     )
+
+
+def choose_device(force_cpu: bool) -> torch.device:
+    if force_cpu:
+        return torch.device("cpu")
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
+def find_latest_run_id(*, exclude: set[str] | None = None) -> str | None:
+    if not MODEL_RUN_ROOT.exists():
+        return None
+    excluded = exclude or set()
+    candidates = [
+        path.name
+        for path in sorted(MODEL_RUN_ROOT.iterdir(), key=lambda path: path.stat().st_mtime, reverse=True)
+        if path.is_dir()
+        and path.name not in excluded
+        and (path / "summary.json").exists()
+        and (path / "best.pt").exists()
+    ]
+    return candidates[0] if candidates else None
+
+
+def load_promoted_run_id() -> str:
+    return load_json(PUBLIC_METADATA_PATH, PublicModelMetadata).run_id
+
+
+def evaluate_entries(
+    model: nn.Module,
+    entries: list[DatasetEntry],
+    device: torch.device,
+    batch_size: int = 64,
+    cache_connection: sqlite3.Connection | None = None,
+) -> tuple[list[float], list[int]]:
+    probabilities = probabilities_from_model(
+        model,
+        [entry.path for entry in entries],
+        [entry.source for entry in entries],
+        device,
+        batch_size=batch_size,
+        connection=cache_connection or connect_offline_cache_db(),
+    ).tolist()
+    labels = [1 if entry.label == POSITIVE_LABEL else 0 for entry in entries]
+    return probabilities, labels
+
+
+def diagnostic_metrics_by(
+    entries: list[DatasetEntry],
+    probabilities: list[float],
+    threshold: float,
+) -> dict[str, dict[str, DiagnosticBucket]]:
+    diagnostics: dict[str, dict[str, DiagnosticBucket]] = {}
+    group_fields = {
+        "source": "source",
+        "label_source": "label_source",
+        "label_tier": "label_tier",
+    }
+    for group_name, field_name in group_fields.items():
+        values = sorted({str(getattr(entry, field_name)) for entry in entries})
+        grouped_metrics: dict[str, DiagnosticBucket] = {}
+        for value in values:
+            indices = [
+                index
+                for index, entry in enumerate(entries)
+                if str(getattr(entry, field_name)) == value
+            ]
+            if not indices:
+                continue
+            grouped_metrics[value] = DiagnosticBucket(
+                count=len(indices),
+                metrics=compute_metrics(
+                    [probabilities[index] for index in indices],
+                    [1 if entries[index].label == POSITIVE_LABEL else 0 for index in indices],
+                    threshold,
+                ),
+            )
+        diagnostics[group_name] = grouped_metrics
+    return diagnostics
 
 
 def load_image_for_inference_with_cache_for_source(

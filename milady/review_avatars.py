@@ -13,6 +13,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from .mobilenet_common import MANUAL_LABEL_SOURCE
 from .pipeline_common import (
     CATALOG_PATH,
     LABELS,
@@ -48,7 +49,6 @@ from .wire import (
 REVIEW_STATIC_ROOT = Path(__file__).resolve().with_name("review_static")
 REVIEW_INDEX_PATH = REVIEW_STATIC_ROOT / "review.html"
 REVIEW_ASSET_ROOT = REVIEW_STATIC_ROOT / "assets"
-MANUAL_LABEL_SOURCE = "manual"
 
 
 class ReviewSnapshot(msgspec.Struct, kw_only=True):

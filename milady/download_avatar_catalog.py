@@ -56,82 +56,82 @@ def main() -> None:
     completed = 0
     failed = 0
 
-    with ThreadPoolExecutor(max_workers=args.concurrency) as executor:
-        future_map = {
-            executor.submit(download_one, normalized_url, args.timeout): normalized_url
-            for normalized_url in urls
-        }
-        for future in as_completed(future_map):
-            normalized_url = future_map[future]
-            result = future.result()
-            completed += 1
-            if result.error:
-                failed += 1
-                connection.execute(
-                    """
-                    UPDATE avatar_urls
-                    SET download_status = 'failed',
-                        last_download_error = ?,
-                        updated_at = ?
-                    WHERE normalized_url = ?
-                    """,
-                    (result.error, now_iso(), normalized_url),
-                )
-            else:
-                connection.execute(
-                    """
-                    INSERT INTO images (
-                      sha256,
-                      local_path,
-                      mime_type,
-                      width,
-                      height,
-                      byte_size,
-                      created_at,
-                      updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(sha256) DO UPDATE SET
-                      local_path = excluded.local_path,
-                      mime_type = excluded.mime_type,
-                      width = excluded.width,
-                      height = excluded.height,
-                      byte_size = excluded.byte_size,
-                      updated_at = excluded.updated_at
-                    """,
-                    (
-                        result.sha256,
-                        result.local_path,
-                        result.mime_type,
-                        result.width,
-                        result.height,
-                        result.byte_size,
-                        now_iso(),
-                        now_iso(),
-                    ),
-                )
-                connection.execute(
-                    """
-                    UPDATE avatar_urls
-                    SET image_sha256 = ?,
-                        download_status = 'downloaded',
-                        last_download_error = NULL,
-                        updated_at = ?
-                    WHERE normalized_url = ?
-                    """,
-                    (result.sha256, now_iso(), normalized_url),
-                )
+    with httpx.Client(follow_redirects=True, timeout=args.timeout) as client:
+        with ThreadPoolExecutor(max_workers=args.concurrency) as executor:
+            future_map = {
+                executor.submit(download_one, client, normalized_url): normalized_url
+                for normalized_url in urls
+            }
+            for future in as_completed(future_map):
+                normalized_url = future_map[future]
+                result = future.result()
+                completed += 1
+                if result.error:
+                    failed += 1
+                    connection.execute(
+                        """
+                        UPDATE avatar_urls
+                        SET download_status = 'failed',
+                            last_download_error = ?,
+                            updated_at = ?
+                        WHERE normalized_url = ?
+                        """,
+                        (result.error, now_iso(), normalized_url),
+                    )
+                else:
+                    connection.execute(
+                        """
+                        INSERT INTO images (
+                          sha256,
+                          local_path,
+                          mime_type,
+                          width,
+                          height,
+                          byte_size,
+                          created_at,
+                          updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(sha256) DO UPDATE SET
+                          local_path = excluded.local_path,
+                          mime_type = excluded.mime_type,
+                          width = excluded.width,
+                          height = excluded.height,
+                          byte_size = excluded.byte_size,
+                          updated_at = excluded.updated_at
+                        """,
+                        (
+                            result.sha256,
+                            result.local_path,
+                            result.mime_type,
+                            result.width,
+                            result.height,
+                            result.byte_size,
+                            now_iso(),
+                            now_iso(),
+                        ),
+                    )
+                    connection.execute(
+                        """
+                        UPDATE avatar_urls
+                        SET image_sha256 = ?,
+                            download_status = 'downloaded',
+                            last_download_error = NULL,
+                            updated_at = ?
+                        WHERE normalized_url = ?
+                        """,
+                        (result.sha256, now_iso(), normalized_url),
+                    )
 
-            connection.commit()
+                connection.commit()
 
     print(f"Downloaded {completed - failed} avatar(s), failed {failed}, total attempted {completed}.")
 
 
-def download_one(normalized_url: str, timeout: float) -> DownloadResult:
+def download_one(client: httpx.Client, normalized_url: str) -> DownloadResult:
     try:
-        with httpx.Client(follow_redirects=True, timeout=timeout) as client:
-            response = client.get(normalized_url)
-            response.raise_for_status()
-            payload = response.content
+        response = client.get(normalized_url)
+        response.raise_for_status()
+        payload = response.content
 
         sha256 = sha256_bytes(payload)
         width, height, mime_type = inspect_image_bytes(payload)

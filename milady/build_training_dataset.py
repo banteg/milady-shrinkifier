@@ -7,8 +7,8 @@ from pathlib import Path
 import msgspec
 from sklearn.model_selection import StratifiedGroupKFold
 
-from .download_collection_samples import COLLECTIONS as NFT_COLLECTIONS, COLLECTION_LABEL_SOURCE
-from .mobilenet_common import DatasetEntry, SPLIT_SEED, dataset_entries_to_jsonl
+from .download_collection_samples import COLLECTIONS as NFT_COLLECTIONS
+from .mobilenet_common import COLLECTION_LABEL_SOURCE, DatasetEntry, MANUAL_LABEL_SOURCE, MODEL_LABEL_SOURCE, SPLIT_SEED, dataset_entries_to_jsonl
 from .pipeline_common import (
     COLLECTION_MANIFEST_PATH,
     SPLIT_MANIFEST_PATH,
@@ -43,8 +43,7 @@ LABEL_TIER_PRIORITY = {
     "trusted": 1,
 }
 TRUSTED_COLLECTION_WEIGHT = 0.5
-GOLD_LABEL_SOURCE = "manual"
-MODEL_LABEL_SOURCE = "model"
+GOLD_LABEL_SOURCE = MANUAL_LABEL_SOURCE
 TRUSTED_LABEL_SOURCES = {MODEL_LABEL_SOURCE}
 COLLECTION_HOLDOUT_VAL_COUNT = 64
 COLLECTION_HOLDOUT_TEST_COUNT = 64
@@ -125,7 +124,7 @@ def main() -> None:
         print(f"[build-dataset] grouped into {len(groups)} image families", flush=True)
         print("[build-dataset] assigning splits", flush=True)
         collection_holdout_assignments = assign_collection_holdout_groups(groups)
-        assignments, manifest_mode = assign_group_splits(groups, args, SPLIT_MANIFEST_PATH)
+        assignments, manifest_mode = assign_group_splits(groups, args, SPLIT_MANIFEST_PATH, collection_holdout_assignments)
         print(f"[build-dataset] split mode={manifest_mode}", flush=True)
 
         dataset_entries: list[DatasetEntry] = []
@@ -396,8 +395,12 @@ def build_group_records(samples: list[SampleRecord]) -> list[GroupRecord]:
     return sorted(groups, key=lambda group: group.canonical.sample_id)
 
 
-def assign_group_splits(groups: list[GroupRecord], args: argparse.Namespace, manifest_path: Path) -> tuple[dict[str, str], str]:
-    forced_eval_assignments = assign_collection_holdout_groups(groups)
+def assign_group_splits(
+    groups: list[GroupRecord],
+    args: argparse.Namespace,
+    manifest_path: Path,
+    forced_eval_assignments: dict[str, str],
+) -> tuple[dict[str, str], str]:
     train_only_assignments = {
         group.group_id: "train"
         for group in groups
@@ -538,7 +541,7 @@ def label_tier_for_export_label_source(label_source: str) -> str:
     raise SystemExit(f"Unsupported exported label source for dataset build: {label_source}")
 
 
-def sample_sort_key(sample: SampleRecord) -> tuple[int, str]:
+def sample_sort_key(sample: SampleRecord) -> tuple[int, int, str]:
     label_tier_priority = LABEL_TIER_PRIORITY.get(sample.label_tier, len(LABEL_TIER_PRIORITY))
     if sample.source == "export":
         priority = SOURCE_PRIORITY["export"]

@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-from .mobilenet_common import create_model, prepare_base_image, score_logits_to_probabilities
+from .mobilenet_common import create_model, find_latest_run_id, prepare_base_image, score_logits_to_probabilities, tensor_from_variant_array
 from .pipeline_common import MODEL_RUN_ROOT, convert_image_to_rgb
 from .wire import RunSummary, encode_json, load_json
 
@@ -26,7 +26,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    run_id = args.run_id or resolve_latest_run_id()
+    run_id = args.run_id or find_latest_run_id()
     if not run_id:
         raise SystemExit("No classifier runs found. Train a classifier first.")
 
@@ -72,19 +72,6 @@ def main() -> None:
             pretty=True,
         ).decode("utf-8")
     )
-
-
-def resolve_latest_run_id() -> str | None:
-    if not MODEL_RUN_ROOT.exists():
-        return None
-    candidates = [
-        path.name
-        for path in sorted(MODEL_RUN_ROOT.iterdir(), key=lambda path: path.stat().st_mtime, reverse=True)
-        if path.is_dir() and (path / "summary.json").exists() and (path / "best.pt").exists()
-    ]
-    return candidates[0] if candidates else None
-
-
 def normalize_profile_image_url(url: str) -> str:
     return re.sub(
         r"_(normal|bigger|mini|reasonably_small|(?:\d+x\d+)|(?:x\d+))(\.[a-z0-9]+)$",
@@ -97,10 +84,7 @@ def normalize_profile_image_url(url: str) -> str:
 def infer_probability(model: torch.nn.Module, image_bytes: bytes) -> float:
     with Image.open(BytesIO(image_bytes)) as image:
         prepared = prepare_base_image(convert_image_to_rgb(image))
-        tensor = torch.from_numpy(np.asarray(prepared, dtype=np.uint8).copy()).permute(2, 0, 1).to(dtype=torch.float32) / 255.0
-        tensor[0].sub_(0.485).div_(0.229)
-        tensor[1].sub_(0.456).div_(0.224)
-        tensor[2].sub_(0.406).div_(0.225)
+        tensor = tensor_from_variant_array(np.asarray(prepared, dtype=np.uint8))
     with torch.no_grad():
         probability = score_logits_to_probabilities(model(tensor.unsqueeze(0)))[0]
     return float(probability.item())
