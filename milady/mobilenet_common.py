@@ -30,7 +30,6 @@ NEGATIVE_LABEL = "not_milady"
 CLASS_NAMES = [NEGATIVE_LABEL, POSITIVE_LABEL]
 POSITIVE_INDEX = 1
 SPLIT_SEED = 1337
-INFERENCE_CROP_VARIANTS: tuple[Literal["center", "top"], ...] = ("center", "top")
 TOP_CROP_SOURCES = frozenset({"milady-maker", "pixelady"})
 
 
@@ -213,10 +212,6 @@ def dataset_entries_to_jsonl(entries: list[DatasetEntry], path: Path) -> None:
     )
 
 
-def load_image_for_inference_with_cache(path: Path, connection: sqlite3.Connection) -> torch.Tensor:
-    return load_image_for_inference_with_cache_for_source(path, "export", connection)
-
-
 def load_image_for_inference_with_cache_for_source(
     path: Path,
     source: str,
@@ -228,11 +223,6 @@ def load_image_for_inference_with_cache_for_source(
     center, top = load_or_create_inference_variant_arrays(path, fingerprint.raw_sha)
     variant = top if crop_variant_for_source(source) == "top" else center
     return tensor_from_variant_array(variant)
-
-
-def load_image_variants_for_inference(image: Image.Image) -> torch.Tensor:
-    arrays = [prepare_inference_variant_array(image, variant) for variant in INFERENCE_CROP_VARIANTS]
-    return variants_tensor_from_arrays(arrays[0], arrays[1])
 
 
 def prepare_inference_variant_array(image: Image.Image, variant: Literal["center", "top"]) -> np.ndarray:
@@ -253,14 +243,6 @@ def crop_variant_for_source(source: str) -> Literal["center", "top"]:
 def tensor_from_variant_array(array: np.ndarray) -> torch.Tensor:
     tensor = torch.from_numpy(np.array(array, copy=True)).permute(2, 0, 1).to(dtype=torch.float32) / 255.0
     return transforms.Normalize(mean=MODEL_MEAN, std=MODEL_STD)(tensor)
-
-
-def variants_tensor_from_arrays(center: np.ndarray, top: np.ndarray) -> torch.Tensor:
-    variants = [center, top]
-    tensors = []
-    for array in variants:
-        tensors.append(tensor_from_variant_array(array))
-    return torch.stack(tensors, dim=0)
 
 
 def load_or_create_inference_variant_arrays(path: Path, raw_sha: str) -> tuple[np.ndarray, np.ndarray]:

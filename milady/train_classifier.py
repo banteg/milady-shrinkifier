@@ -280,7 +280,6 @@ def main() -> None:
             head_learning_rate=head_learning_rate,
             learning_rate=args.learning_rate,
             label_smoothing=args.label_smoothing,
-            augment=False,
             evaluation_policy=RunEvaluationPolicy(
                 headline=HEADLINE_EVAL_POLICY,
                 train_includes_trusted_synthetic=True,
@@ -432,7 +431,6 @@ def init_wandb(
         "log_every": args.log_every,
         "learning_rate": args.learning_rate,
         "label_smoothing": args.label_smoothing,
-        "augment": False,
         "weight_decay": args.weight_decay,
         "patience": args.patience,
         "precision_floor": args.precision_floor,
@@ -683,7 +681,7 @@ def print_run_header(
         f"weight_decay={args.weight_decay:g} patience={args.patience} precision_floor={args.precision_floor:.4f} "
         f"seed={args.seed} "
         f"warmup_epochs={head_warmup_epochs} head_lr={head_learning_rate:g} "
-        f"scheduler={args.scheduler} label_smoothing={args.label_smoothing:g} augment=off",
+        f"scheduler={args.scheduler} label_smoothing={args.label_smoothing:g}",
         flush=True,
     )
     print(
