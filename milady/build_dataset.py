@@ -7,7 +7,7 @@ from pathlib import Path
 import msgspec
 from sklearn.model_selection import StratifiedGroupKFold
 
-from .download_collection_samples import COLLECTIONS as NFT_COLLECTIONS
+from .download_collections import COLLECTIONS as NFT_COLLECTIONS
 from .mobilenet_common import COLLECTION_LABEL_SOURCE, DatasetEntry, MANUAL_LABEL_SOURCE, MODEL_LABEL_SOURCE, SPLIT_SEED, dataset_entries_to_jsonl
 from .pipeline_common import (
     COLLECTION_MANIFEST_PATH,

@@ -79,7 +79,7 @@ def main() -> None:
         train_entries = [*train_entries, *val_entries]
         val_entries = test_entries
     if not train_entries or not val_entries:
-        raise SystemExit("Missing train/val split files. Run build_training_dataset.py first.")
+        raise SystemExit("Missing train/val split files. Run `uv run milady build-dataset` first.")
 
     seed_everything(args.seed)
     device = choose_device(args.cpu)

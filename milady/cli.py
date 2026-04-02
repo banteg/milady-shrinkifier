@@ -6,17 +6,17 @@ import sys
 
 
 COMMANDS: dict[str, tuple[str, str]] = {
-    "review": ("milady.review_avatars", "Run the local review app."),
-    "ingest": ("milady.ingest_avatar_exports", "Ingest exported avatar manifests into the local catalog."),
-    "download-avatars": ("milady.download_avatar_catalog", "Download avatar images from the local catalog."),
-    "download-collections": ("milady.download_collection_samples", "Download configured NFT collection samples."),
-    "build-dataset": ("milady.build_training_dataset", "Materialize train/val/test splits."),
+    "review": ("milady.review_app", "Run the local review app."),
+    "ingest": ("milady.ingest_exports", "Ingest exported avatar manifests into the local catalog."),
+    "download-avatars": ("milady.download_avatars", "Download avatar images from the local catalog."),
+    "download-collections": ("milady.download_collections", "Download configured NFT collection samples."),
+    "build-dataset": ("milady.build_dataset", "Materialize train/val/test splits."),
     "train": ("milady.train_classifier", "Train the MobileNetV3-Small classifier."),
-    "eval": ("milady.compare_runs", "Evaluate explicit runs or run groups on a shared evaluation set."),
-    "export-errors": ("milady.export_compare_errors", "Export compare false positives and negatives as image folders."),
-    "score": ("milady.score_avatar_catalog", "Score the local catalog with a trained classifier."),
-    "export-onnx": ("milady.export_classifier_onnx", "Export a trained classifier to ONNX for the extension runtime."),
-    "check-pfp": ("milady.check_pfp_url", "Score a single profile image URL or local image file."),
+    "eval": ("milady.eval_runs", "Evaluate explicit runs or run groups on a shared evaluation set."),
+    "export-errors": ("milady.export_errors", "Export compare false positives and negatives as image folders."),
+    "score": ("milady.score_catalog", "Score the local catalog with a trained classifier."),
+    "export-onnx": ("milady.export_onnx", "Export a trained classifier to ONNX for the extension runtime."),
+    "check-pfp": ("milady.check_pfp", "Score a single profile image URL or local image file."),
 }
 
 
