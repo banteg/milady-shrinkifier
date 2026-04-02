@@ -65,6 +65,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--precision-floor", type=float, default=0.995)
     parser.add_argument("--run-id", default=datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ"))
     parser.add_argument("--cpu", action="store_true", help="Force CPU training even when MPS/CUDA is available.")
+    parser.add_argument("--refit", action="store_true", help="Fit on train+val and use test as the selection/eval split for a final refit experiment.")
     parser.add_argument(
         "--wandb-project",
         default=os.environ.get("WANDB_PROJECT", DEFAULT_WANDB_PROJECT),
@@ -85,6 +86,9 @@ def main() -> None:
     train_entries = load_dataset_entries(SPLIT_ROOT / "train.jsonl")
     val_entries = load_dataset_entries(SPLIT_ROOT / "val.jsonl")
     test_entries = load_dataset_entries(SPLIT_ROOT / "test.jsonl")
+    if args.refit:
+        train_entries = [*train_entries, *val_entries]
+        val_entries = test_entries
     if not train_entries or not val_entries:
         raise SystemExit("Missing train/val split files. Run build_training_dataset.py first.")
 
@@ -281,7 +285,7 @@ def main() -> None:
             learning_rate=args.learning_rate,
             label_smoothing=args.label_smoothing,
             evaluation_policy=RunEvaluationPolicy(
-                headline=HEADLINE_EVAL_POLICY,
+                headline="refit_train_plus_val_with_test_selection" if args.refit else HEADLINE_EVAL_POLICY,
                 train_includes_trusted_synthetic=True,
             ),
             dataset_splits={
@@ -431,6 +435,7 @@ def init_wandb(
         "log_every": args.log_every,
         "learning_rate": args.learning_rate,
         "label_smoothing": args.label_smoothing,
+        "refit": args.refit,
         "weight_decay": args.weight_decay,
         "patience": args.patience,
         "precision_floor": args.precision_floor,
@@ -679,7 +684,7 @@ def print_run_header(
         f"[setup] run_id={args.run_id} device={device.type} "
         f"epochs={args.epochs} batch_size={args.batch_size} lr={args.learning_rate:g} "
         f"weight_decay={args.weight_decay:g} patience={args.patience} precision_floor={args.precision_floor:.4f} "
-        f"seed={args.seed} "
+        f"seed={args.seed} refit={'on' if args.refit else 'off'} "
         f"warmup_epochs={head_warmup_epochs} head_lr={head_learning_rate:g} "
         f"scheduler={args.scheduler} label_smoothing={args.label_smoothing:g}",
         flush=True,

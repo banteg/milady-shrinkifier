@@ -212,9 +212,8 @@ The dataset builder groups images by:
 
 - raw SHA
 - normalized pixel digest
-- perceptual hash proximity
 
-This prevents obvious duplicates and near-duplicates from leaking across splits.
+This prevents obvious duplicates from leaking across splits.
 
 ### Split Policy
 

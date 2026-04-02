@@ -259,8 +259,6 @@ def build_model_label_payload(run_id: str, sha256: str, label: str, score: float
 def choose_device(force_cpu: bool) -> torch.device:
     if force_cpu:
         return torch.device("cpu")
-    if torch.cuda.is_available():
-        return torch.device("cuda")
     if torch.backends.mps.is_available():
         return torch.device("mps")
     return torch.device("cpu")

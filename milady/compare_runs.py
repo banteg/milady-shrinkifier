@@ -316,8 +316,6 @@ def load_all_exported_entries(allowed_label_sources: set[str] | None = None) -> 
 def choose_device(force_cpu: bool) -> torch.device:
     if force_cpu:
         return torch.device("cpu")
-    if torch.cuda.is_available():
-        return torch.device("cuda")
     if torch.backends.mps.is_available():
         return torch.device("mps")
     return torch.device("cpu")

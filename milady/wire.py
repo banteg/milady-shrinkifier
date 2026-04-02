@@ -141,6 +141,9 @@ class SplitManifestEvaluationPolicy(msgspec.Struct, kw_only=True):
     model_label_weight: float
     collection_blind_holdout_val_count: int
     collection_blind_holdout_test_count: int
+    hard_example_run_id: str | None = None
+    hard_example_proximity_scale: float = 0.0
+    hard_example_disagreement_bonus: float = 0.0
 
 
 class SplitManifestRatios(msgspec.Struct, kw_only=True):
