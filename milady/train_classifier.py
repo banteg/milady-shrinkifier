@@ -30,7 +30,7 @@ from .mobilenet_common import (
     load_dataset_entries,
 )
 from .pipeline_common import COLLECTION_MANIFEST_PATH, MODEL_RUN_ROOT, SPLIT_MANIFEST_PATH, SPLIT_ROOT, connect_db, connect_offline_cache_db
-from .wire import CollectionManifest, MetricSummary, RunDatasetSplitSummary, RunEvaluationPolicy, RunHistoryEntry, RunSummary, SplitManifest, dump_json, encode_json, load_json
+from .wire import CollectionManifest, MetricSummary, RunDatasetSplitSummary, RunHistoryEntry, RunSummary, SplitManifest, dump_json, encode_json, load_json
 
 
 def parse_args() -> argparse.Namespace:
@@ -235,9 +235,7 @@ def main() -> None:
             head_learning_rate=head_learning_rate,
             learning_rate=args.learning_rate,
             label_smoothing=args.label_smoothing,
-            evaluation_policy=RunEvaluationPolicy(
-                headline="refit_train_plus_val_with_test_selection" if args.refit else HEADLINE_EVAL_POLICY,
-            ),
+            evaluation_policy_headline="refit_train_plus_val_with_test_selection" if args.refit else HEADLINE_EVAL_POLICY,
             dataset_splits={
                 "train": split_summary(train_entries),
                 "val": split_summary(val_entries),

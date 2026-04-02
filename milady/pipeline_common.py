@@ -17,7 +17,6 @@ from .wire import (
     ReviewItem,
     RunSummary,
     decode_string_list,
-    encode_string_list,
     load_json,
 )
 
@@ -231,15 +230,6 @@ def resolve_repo_path(path: str | Path) -> Path:
     if candidate.is_absolute():
         return candidate
     return PROJECT_ROOT / candidate
-
-
-def parse_json_list(value: str | None) -> list[str]:
-    return decode_string_list(value)
-
-
-def encode_json_list(values: list[str]) -> str:
-    return encode_string_list(values)
-
 
 def merge_string_lists(left: list[str], right: list[str]) -> list[str]:
     return sorted({entry for entry in [*left, *right] if entry})
@@ -498,9 +488,9 @@ def load_review_items(connection: sqlite3.Connection, run_id: str | None = None)
         last_seen_at: str | None = None
 
         for row in related:
-            handles = merge_string_lists(handles, parse_json_list(row["handles_json"]))
-            display_names = merge_string_lists(display_names, parse_json_list(row["display_names_json"]))
-            source_surfaces = merge_string_lists(source_surfaces, parse_json_list(row["source_surfaces_json"]))
+            handles = merge_string_lists(handles, decode_string_list(row["handles_json"]))
+            display_names = merge_string_lists(display_names, decode_string_list(row["display_names_json"]))
+            source_surfaces = merge_string_lists(source_surfaces, decode_string_list(row["source_surfaces_json"]))
             seen_count += int(row["seen_count"])
             whitelisted = whitelisted or bool_from_db(row["whitelisted"])
             example_profile_url = example_profile_url or row["example_profile_url"]

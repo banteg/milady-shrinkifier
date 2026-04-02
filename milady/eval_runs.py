@@ -32,7 +32,6 @@ from .wire import (
     CompareErrorItem,
     CompareRunSummary,
     CompareSummary,
-    CompareSummaryEvaluationPolicy,
     RunSummary,
     SplitManifest,
     dump_json,
@@ -183,7 +182,7 @@ def run_compare(
             device=device.type,
             val_size=len(val_entries),
             test_size=len(test_entries),
-            evaluation_policy=CompareSummaryEvaluationPolicy(headline=evaluation_policy),
+            evaluation_policy_headline=evaluation_policy,
             run_ids=run_ids,
             runs=result_runs,
         )
@@ -339,7 +338,7 @@ def format_compare_report(results: CompareSummary) -> str:
     baseline = results.runs[baseline_run_id]
     lines = [
         "",
-        f"Compare summary ({results.evaluation_policy.headline})",
+        f"Compare summary ({results.evaluation_policy_headline})",
         f"Baseline: {baseline_run_id}",
         "",
         format_compare_table(results, baseline_run_id, baseline),

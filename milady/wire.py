@@ -206,10 +206,6 @@ class DiagnosticBucket(msgspec.Struct, kw_only=True):
     metrics: MetricSummary
 
 
-class RunEvaluationPolicy(msgspec.Struct, omit_defaults=True, kw_only=True):
-    headline: str = ""
-
-
 class RunDatasetSplitSummary(msgspec.Struct, kw_only=True):
     total: int
     class_counts: dict[str, int]
@@ -247,7 +243,7 @@ class RunSummary(msgspec.Struct, omit_defaults=True, kw_only=True):
     head_learning_rate: float = 0.0
     learning_rate: float = 0.0
     label_smoothing: float = 0.0
-    evaluation_policy: RunEvaluationPolicy = msgspec.field(default_factory=RunEvaluationPolicy)
+    evaluation_policy_headline: str = ""
     dataset_splits: dict[str, RunDatasetSplitSummary] = msgspec.field(default_factory=dict)
     best_epoch: int
     threshold: float
@@ -298,16 +294,12 @@ class CompareRunSummary(msgspec.Struct, kw_only=True):
     false_negatives_path: str
 
 
-class CompareSummaryEvaluationPolicy(msgspec.Struct, kw_only=True):
-    headline: str = ""
-
-
 class CompareSummary(msgspec.Struct, omit_defaults=True, kw_only=True):
     generated_at: str
     device: str
     val_size: int = 0
     test_size: int = 0
-    evaluation_policy: CompareSummaryEvaluationPolicy = msgspec.field(default_factory=CompareSummaryEvaluationPolicy)
+    evaluation_policy_headline: str = ""
     run_ids: list[str]
     runs: dict[str, CompareRunSummary]
     releases: dict[str, str] | None = None

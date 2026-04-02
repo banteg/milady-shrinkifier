@@ -6,17 +6,15 @@ import shutil
 from .pipeline_common import (
     INGEST_ROOT,
     EXPORT_ROOT,
-    connect_db,
     coalesce_latest,
+    connect_db,
     discover_export_paths,
-    encode_json_list,
     max_timestamp,
     merge_string_lists,
     min_timestamp,
     now_iso,
-    parse_json_list,
 )
-from .wire import IngestExportPayload, load_json
+from .wire import IngestExportPayload, encode_string_list, decode_string_list, load_json
 
 
 def parse_args() -> argparse.Namespace:
@@ -92,9 +90,15 @@ def main() -> None:
             incoming_source_surfaces = avatar.source_surfaces
 
             if existing:
-                merged_handles = merge_string_lists(parse_json_list(existing["handles_json"]), incoming_handles)
-                merged_display_names = merge_string_lists(parse_json_list(existing["display_names_json"]), incoming_display_names)
-                merged_sources = merge_string_lists(parse_json_list(existing["source_surfaces_json"]), incoming_source_surfaces)
+                merged_handles = merge_string_lists(decode_string_list(existing["handles_json"]), incoming_handles)
+                merged_display_names = merge_string_lists(
+                    decode_string_list(existing["display_names_json"]),
+                    incoming_display_names,
+                )
+                merged_sources = merge_string_lists(
+                    decode_string_list(existing["source_surfaces_json"]),
+                    incoming_source_surfaces,
+                )
 
                 connection.execute(
                     """
@@ -115,9 +119,9 @@ def main() -> None:
                     """,
                     (
                         avatar.original_url,
-                        encode_json_list(merged_handles),
-                        encode_json_list(merged_display_names),
-                        encode_json_list(merged_sources),
+                        encode_string_list(merged_handles),
+                        encode_string_list(merged_display_names),
+                        encode_string_list(merged_sources),
                         int(existing["seen_count"]) + avatar.seen_count,
                         min_timestamp(existing["first_seen_at"], avatar.first_seen_at),
                         max_timestamp(existing["last_seen_at"], avatar.last_seen_at),
@@ -152,9 +156,9 @@ def main() -> None:
                     (
                         normalized_url,
                         avatar.original_url,
-                        encode_json_list(incoming_handles),
-                        encode_json_list(incoming_display_names),
-                        encode_json_list(incoming_source_surfaces),
+                        encode_string_list(incoming_handles),
+                        encode_string_list(incoming_display_names),
+                        encode_string_list(incoming_source_surfaces),
                         avatar.seen_count,
                         avatar.first_seen_at,
                         avatar.last_seen_at,
