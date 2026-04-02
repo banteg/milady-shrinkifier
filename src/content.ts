@@ -391,15 +391,8 @@ async function detectAvatarUncached(normalizedUrl: string): Promise<DetectionRes
   try {
     const resolvedModel = await loadModelMetadata();
     const runtimeImage = await loadCorsImage(normalizedUrl);
-    const variants = await Promise.all([
-      computeBrowserImageFeatures(runtimeImage, resolvedModel.config, "center"),
-      computeBrowserImageFeatures(runtimeImage, resolvedModel.config, "top"),
-    ]);
-    const score = await scoreWithOnnx(
-      resolvedModel,
-      variants,
-      normalizedUrl,
-    );
+    const modelTensor = await computeBrowserImageFeatures(runtimeImage, resolvedModel.config);
+    const score = await scoreWithOnnx(resolvedModel, modelTensor, normalizedUrl);
     return {
       matched: score >= resolvedModel.metadata.threshold,
       source: score >= resolvedModel.metadata.threshold ? "onnx" : null,
@@ -748,6 +741,12 @@ async function getWorker(resolvedModel: ResolvedModel): Promise<Worker> {
       modelUrl: resolvedModel.modelUrl,
       wasmPath: chrome.runtime.getURL("ort/"),
       positiveIndex: resolvedModel.config.positiveIndex,
+      inputShape: [
+        1,
+        resolvedModel.config.channels,
+        resolvedModel.config.inputSize,
+        resolvedModel.config.inputSize,
+      ],
     });
     return worker;
   });
@@ -757,26 +756,19 @@ async function getWorker(resolvedModel: ResolvedModel): Promise<Worker> {
 
 async function scoreWithOnnx(
   resolvedModel: ResolvedModel,
-  variants: Array<{ modelTensor: Float32Array; modelShape: [1, number, number, number] }>,
+  modelTensor: Float32Array,
   seed: string,
 ): Promise<number> {
   const worker = await getWorker(resolvedModel);
-  const scores = await Promise.all(
-    variants.map(
-      ({ modelTensor, modelShape }, index) =>
-        new Promise<number>((resolve, reject) => {
-          const id = `${seed}:${index}:${crypto.randomUUID()}`;
-          pendingWorker.set(id, { resolve, reject });
-          const payload: WorkerRequest = {
-            id,
-            tensor: modelTensor,
-            shape: modelShape,
-          };
-          worker.postMessage(payload, [modelTensor.buffer]);
-        }),
-    ),
-  );
-  return Math.max(...scores);
+  return new Promise<number>((resolve, reject) => {
+    const id = `${seed}:${crypto.randomUUID()}`;
+    pendingWorker.set(id, { resolve, reject });
+    const payload: WorkerRequest = {
+      id,
+      tensor: modelTensor,
+    };
+    worker.postMessage(payload, [modelTensor.buffer]);
+  });
 }
 
 function isFilterMode(value: unknown): value is ExtensionSettings["mode"] {

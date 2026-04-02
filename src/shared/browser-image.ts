@@ -1,9 +1,6 @@
-import type { RuntimeImageFeatures } from "./runtime-image-types";
 import {
   computeCoverCropRegion,
   computeNormalizedTensorFromRgbBuffer,
-  runtimeModelShape,
-  type CropVariant,
   type RuntimeModelConfig,
 } from "./model-config";
 
@@ -25,8 +22,7 @@ export async function loadCorsImage(url: string): Promise<HTMLImageElement> {
 export async function computeBrowserImageFeatures(
   image: HTMLImageElement,
   config: RuntimeModelConfig,
-  variant: CropVariant = "center",
-): Promise<RuntimeImageFeatures> {
+): Promise<Float32Array> {
   const classifierCanvas = document.createElement("canvas");
   classifierCanvas.width = config.inputSize;
   classifierCanvas.height = config.inputSize;
@@ -34,14 +30,11 @@ export async function computeBrowserImageFeatures(
   if (!classifierContext) {
     throw new Error("Unable to create classifier context");
   }
-  drawCoverImage(classifierContext, image, config.inputSize, config.inputSize, variant);
+  drawCoverImage(classifierContext, image, config.inputSize, config.inputSize);
   const classifierPixels = classifierContext
     .getImageData(0, 0, config.inputSize, config.inputSize).data;
 
-  return {
-    modelTensor: rgbaToModelTensor(classifierPixels, config),
-    modelShape: runtimeModelShape(config),
-  };
+  return rgbaToModelTensor(classifierPixels, config);
 }
 
 function drawCoverImage(
@@ -49,11 +42,10 @@ function drawCoverImage(
   image: CanvasImageSource,
   targetWidth: number,
   targetHeight: number,
-  variant: CropVariant,
 ): void {
   const imageWidth = "naturalWidth" in image ? image.naturalWidth : targetWidth;
   const imageHeight = "naturalHeight" in image ? image.naturalHeight : targetHeight;
-  const region = computeCoverCropRegion(imageWidth, imageHeight, targetWidth, targetHeight, variant);
+  const region = computeCoverCropRegion(imageWidth, imageHeight, targetWidth, targetHeight, "center");
 
   context.clearRect(0, 0, targetWidth, targetHeight);
   context.drawImage(

@@ -6,10 +6,12 @@ interface InitMessage {
   modelUrl: string;
   wasmPath: string;
   positiveIndex: number;
+  inputShape: [number, number, number, number];
 }
 
 let sessionPromise: Promise<ort.InferenceSession> | null = null;
 let positiveIndex = 1;
+let inputShape: [number, number, number, number] | null = null;
 let runQueue: Promise<void> = Promise.resolve();
 
 self.addEventListener("message", (event: MessageEvent<InitMessage | WorkerRequest>) => {
@@ -18,6 +20,7 @@ self.addEventListener("message", (event: MessageEvent<InitMessage | WorkerReques
   if ("modelUrl" in data) {
     ort.env.wasm.wasmPaths = data.wasmPath;
     positiveIndex = data.positiveIndex;
+    inputShape = data.inputShape;
     sessionPromise = ort.InferenceSession.create(data.modelUrl, {
       executionProviders: ["wasm"],
       graphOptimizationLevel: "all",
@@ -37,9 +40,12 @@ async function handleInferenceRequest(request: WorkerRequest): Promise<void> {
   if (!sessionPromise) {
     throw new Error("Worker used before model initialization");
   }
+  if (!inputShape) {
+    throw new Error("Worker used before input shape initialization");
+  }
 
   const session = await sessionPromise;
-  const tensor = new ort.Tensor("float32", request.tensor, request.shape);
+  const tensor = new ort.Tensor("float32", request.tensor, inputShape);
   const output = await runModel(session, tensor);
   const score = scoreFromOutput(output, 0, output.length);
   self.postMessage({

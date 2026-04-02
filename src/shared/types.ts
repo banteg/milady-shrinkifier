@@ -64,7 +64,6 @@ export interface DetectionResult {
 export interface WorkerInferenceRequest {
   id: string;
   tensor: Float32Array;
-  shape: [number, number, number, number];
 }
 
 export interface WorkerSuccessResponse {
