@@ -11,7 +11,6 @@ from pathlib import Path
 import httpx
 import msgspec
 
-from .mobilenet_common import COLLECTION_LABEL_SOURCE
 from .pipeline_common import COLLECTION_MANIFEST_PATH, COLLECTION_ROOT, guess_extension
 from .wire import CollectionFailure, CollectionManifest, CollectionManifestCollection, CollectionSample, dump_json
 

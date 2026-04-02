@@ -155,7 +155,7 @@ def require_labeled_filter(filter_name: str) -> str:
     return filter_name
 
 
-def index_payload(snapshot: ReviewSnapshot, queue_name: str, index: int) -> dict[str, Any]:
+def index_payload(snapshot: ReviewSnapshot, queue_name: str, index: int) -> ReviewQueuePayload:
     items = snapshot.queue_lists[queue_name]
     if not items:
         return ReviewQueuePayload(queue=queue_name, index=0, total=0, item=None)

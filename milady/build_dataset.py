@@ -7,7 +7,7 @@ from pathlib import Path
 import msgspec
 from sklearn.model_selection import StratifiedGroupKFold
 
-from .download_collections import COLLECTIONS as NFT_COLLECTIONS
+from .download_collections import COLLECTIONS as NFT_COLLECTIONS, CollectionSpec
 from .mobilenet_common import COLLECTION_LABEL_SOURCE, DatasetEntry, MANUAL_LABEL_SOURCE, MODEL_LABEL_SOURCE, SPLIT_SEED, dataset_entries_to_jsonl
 from .pipeline_common import (
     COLLECTION_MANIFEST_PATH,
@@ -199,6 +199,16 @@ def main() -> None:
         for split_name, entries in by_split.items():
             dataset_entries_to_jsonl(entries, SPLIT_ROOT / f"{split_name}.jsonl")
 
+        split_summaries = {
+            split_name: SplitSummaryPayload(
+                total=len(entries),
+                milady=sum(1 for entry in entries if entry.label == "milady"),
+                not_milady=sum(1 for entry in entries if entry.label == "not_milady"),
+                gold=sum(1 for entry in entries if entry.label_tier == "gold"),
+                trusted=sum(1 for entry in entries if entry.label_tier == "trusted"),
+            )
+            for split_name, entries in by_split.items()
+        }
         summary = {
             "manifest_mode": manifest_mode,
             "sample_count": len(samples),
@@ -209,14 +219,8 @@ def main() -> None:
             "train_only_groups": sum(1 for group in groups if not group.blind_eval_eligible),
             "collection_blind_holdout_groups": len(collection_holdout_assignments),
             "splits": {
-                split_name: {
-                    "total": len(entries),
-                    "milady": sum(1 for entry in entries if entry.label == "milady"),
-                    "not_milady": sum(1 for entry in entries if entry.label == "not_milady"),
-                    "gold": sum(1 for entry in entries if entry.label_tier == "gold"),
-                    "trusted": sum(1 for entry in entries if entry.label_tier == "trusted"),
-                }
-                for split_name, entries in by_split.items()
+                split_name: msgspec.to_builtins(payload)
+                for split_name, payload in split_summaries.items()
             },
         }
         dump_json(
@@ -243,10 +247,7 @@ def main() -> None:
         )
         dump_json(
             SPLIT_ROOT / "summary.json",
-            {
-                split_name: SplitSummaryPayload(**split_summary)
-                for split_name, split_summary in summary["splits"].items()
-            },
+            split_summaries,
         )
         print("[build-dataset] wrote split manifest and jsonl files", flush=True)
         print(json.dumps(summary, indent=2, sort_keys=True))
@@ -325,14 +326,14 @@ def build_sample_records(
     return samples
 
 
-def load_collection_rows() -> list[tuple[object, int, Path]]:
+def load_collection_rows() -> list[tuple[CollectionSpec, int, Path]]:
     if not COLLECTION_MANIFEST_PATH.exists():
         raise SystemExit("Missing collection manifest. Run `uv run milady download-collections` first.")
 
     manifest = load_json(COLLECTION_MANIFEST_PATH, CollectionManifest)
     raw_collections = manifest.collections
 
-    rows: list[tuple[object, int, Path]] = []
+    rows: list[tuple[CollectionSpec, int, Path]] = []
     for collection in raw_collections:
         slug = collection.slug
         samples = collection.samples

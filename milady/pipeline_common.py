@@ -7,7 +7,7 @@ import sqlite3
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import msgspec
@@ -300,7 +300,7 @@ def convert_image_to_rgb(image: Image.Image) -> Image.Image:
 def inspect_image_bytes(payload: bytes) -> tuple[int, int, str | None]:
     with Image.open(BytesIO(payload)) as image:
         width, height = image.size
-        mime_type = Image.MIME.get(image.format)
+        mime_type = Image.MIME.get(image.format) if image.format is not None else None
     return width, height, mime_type
 
 
@@ -414,7 +414,7 @@ def inference_variant_cache_path(raw_sha: str) -> Path:
 def write_npz_atomic(path: Path, **arrays: np.ndarray) -> None:
     temporary_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     with temporary_path.open("wb") as handle:
-        np.savez_compressed(handle, **arrays)
+        np.savez_compressed(cast(Any, handle), **cast(Any, arrays))
     temporary_path.replace(path)
 
 

@@ -22,7 +22,7 @@ from .pipeline_common import (
     inference_variant_cache_path,
     write_npz_atomic,
 )
-from .wire import DatasetEntryPayload, DiagnosticBucket, MetricSummary, PublicModelMetadata, dump_jsonl, load_jsonl
+from .wire import DatasetEntryPayload, DiagnosticBucket, MetricSummary, PublicModelMetadata, dump_jsonl, load_json, load_jsonl
 
 MODEL_IMAGE_SIZE = 128
 MODEL_MEAN = [0.485, 0.456, 0.406]

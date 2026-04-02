@@ -45,7 +45,7 @@ def main() -> None:
     PUBLIC_MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
     torch.onnx.export(
         wrapper,
-        dummy,
+        (dummy,),
         PUBLIC_MODEL_PATH,
         input_names=["input"],
         output_names=["probabilities"],

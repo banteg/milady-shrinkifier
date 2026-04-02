@@ -16,6 +16,7 @@ from torch.utils.data import DataLoader
 from .mobilenet_common import (
     AvatarDataset,
     CLASS_NAMES,
+    DatasetEntry,
     HEADLINE_EVAL_POLICY,
     MODEL_IMAGE_SIZE,
     MODEL_MEAN,
@@ -91,7 +92,11 @@ def main() -> None:
         batch_size=args.batch_size,
         shuffle=True,
         generator=build_loader_generator(args.seed),
-        **dataloader_kwargs(args, device),
+        num_workers=max(0, args.num_workers),
+        pin_memory=False,
+        persistent_workers=max(0, args.num_workers) > 0,
+        worker_init_fn=worker_init_fn if max(0, args.num_workers) > 0 else None,
+        prefetch_factor=max(1, args.prefetch_factor) if args.num_workers > 0 else None,
     )
     model = create_model(pretrained=True).to(device)
     set_trainable_parameters(model, head_only=head_warmup_epochs > 0)
@@ -486,19 +491,6 @@ def worker_init_fn(worker_id: int) -> None:
     random.seed(worker_seed)
     np.random.seed(worker_seed)
     torch.manual_seed(worker_seed)
-
-
-def dataloader_kwargs(args: argparse.Namespace, device: torch.device) -> dict[str, object]:
-    num_workers = max(0, args.num_workers)
-    kwargs: dict[str, object] = {
-        "num_workers": num_workers,
-        "pin_memory": False,
-    }
-    if num_workers > 0:
-        kwargs["persistent_workers"] = True
-        kwargs["worker_init_fn"] = worker_init_fn
-        kwargs["prefetch_factor"] = max(1, args.prefetch_factor)
-    return kwargs
 
 
 def build_loss(train_entries: list[DatasetEntry], label_smoothing: float) -> nn.Module:
