@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import sqlite3
 import threading
 import uuid
 from contextlib import closing
 from pathlib import Path
-from typing import Any
+from typing import TypeVar
 
 import msgspec
 import uvicorn
@@ -45,6 +46,8 @@ from .wire import (
     encode_json,
 )
 
+T = TypeVar("T")
+
 
 REVIEW_STATIC_ROOT = Path(__file__).resolve().with_name("review_static")
 REVIEW_INDEX_PATH = REVIEW_STATIC_ROOT / "review.html"
@@ -62,7 +65,7 @@ class ReviewSnapshot(msgspec.Struct, kw_only=True):
     image_paths: dict[str, Path]
     label_counts: dict[str, int]
     needs_review: int
-    recent_events: list[dict[str, Any]]
+    recent_events: list[sqlite3.Row]
     can_undo: bool
 
 
@@ -107,7 +110,7 @@ class ReviewState:
                     needs_review += 1
                 elif item.label in label_counts:
                     label_counts[item.label] += 1
-            recent_events = [dict(row) for row in recent_label_events(connection, 200)]
+            recent_events = recent_label_events(connection, 200)
 
         return ReviewSnapshot(
             catalog_path=str(CATALOG_PATH),
@@ -168,7 +171,7 @@ def index_payload(snapshot: ReviewSnapshot, queue_name: str, index: int) -> Revi
     )
 
 
-def json_response(payload: Any, status_code: int = 200) -> Response:
+def json_response(payload: object, status_code: int = 200) -> Response:
     return Response(content=encode_json(payload), media_type="application/json", status_code=status_code)
 
 
@@ -254,7 +257,7 @@ def get_history(limit: int = Query(24, ge=1, le=100), run_id: str | None = Query
                 sha256=str(event["image_sha256"]),
                 created_at=str(event["created_at"]),
                 new_label=str(event["new_label"]),
-                previous_label=event["previous_label"],
+                previous_label=str(event["previous_label"]) if event["previous_label"] is not None else None,
                 item=item,
             )
         )
@@ -532,7 +535,7 @@ def get_image(sha256: str) -> FileResponse:
     return FileResponse(path)
 
 
-def recent_label_events(connection, limit: int) -> list[Any]:
+def recent_label_events(connection: sqlite3.Connection, limit: int) -> list[sqlite3.Row]:
     return connection.execute(
         """
         SELECT id, image_sha256, previous_label, new_label, created_at, batch_id
@@ -544,12 +547,12 @@ def recent_label_events(connection, limit: int) -> list[Any]:
     ).fetchall()
 
 
-def latest_label_event(connection):
+def latest_label_event(connection: sqlite3.Connection) -> sqlite3.Row | None:
     rows = recent_label_events(connection, 1)
     return rows[0] if rows else None
 
 
-def decode_request_body(payload: bytes, type_: type[Any]) -> Any:
+def decode_request_body(payload: bytes, type_: type[T]) -> T:
     try:
         return decode_json(payload, type_)
     except msgspec.DecodeError as error:

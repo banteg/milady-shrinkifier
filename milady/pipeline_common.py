@@ -245,7 +245,7 @@ def merge_string_lists(left: list[str], right: list[str]) -> list[str]:
     return sorted({entry for entry in [*left, *right] if entry})
 
 
-def bool_from_db(value: Any) -> bool:
+def bool_from_db(value: object | None) -> bool:
     return bool(value) if value is not None else False
 
 

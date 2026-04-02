@@ -6,13 +6,14 @@ from io import BytesIO
 from pathlib import Path
 
 import httpx
+import msgspec
 import numpy as np
 import torch
 from PIL import Image
 
 from .mobilenet_common import create_model, find_latest_run_id, prepare_base_image, score_logits_to_probabilities, tensor_from_variant_array
 from .pipeline_common import MODEL_RUN_ROOT, convert_image_to_rgb
-from .wire import RunSummary, encode_json, load_json
+from .wire import CheckPfpResult, RunSummary, encode_json, load_json
 
 
 def parse_args() -> argparse.Namespace:
@@ -45,30 +46,35 @@ def main() -> None:
     model.load_state_dict(torch.load(checkpoint_path, map_location="cpu"))
     model.eval()
 
-    output: dict[str, object] = {
-        "input": args.input,
-        "run_id": run_id,
-        "threshold": threshold,
-    }
+    result = CheckPfpResult(
+        input=args.input,
+        run_id=run_id,
+        threshold=threshold,
+        probability=0.0,
+        matched=False,
+    )
     local_path = Path(args.input).expanduser()
     if local_path.exists() and local_path.is_file():
         probability = infer_probability(model, local_path.read_bytes())
-        output["local_path"] = str(local_path.resolve())
+        result = msgspec.structs.replace(result, local_path=str(local_path.resolve()))
     else:
         normalized_url = normalize_profile_image_url(args.input)
         response = httpx.get(normalized_url, timeout=args.timeout, follow_redirects=True)
         response.raise_for_status()
         probability = infer_probability(model, response.content)
-        output["url"] = args.input
-        output["normalized_url"] = normalized_url
+        result = msgspec.structs.replace(
+            result,
+            url=args.input,
+            normalized_url=normalized_url,
+        )
 
     print(
         encode_json(
-            {
-                **output,
-                "probability": probability,
-                "matched": probability >= threshold,
-            },
+            msgspec.structs.replace(
+                result,
+                probability=probability,
+                matched=probability >= threshold,
+            ),
             pretty=True,
         ).decode("utf-8")
     )

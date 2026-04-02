@@ -12,7 +12,7 @@ import httpx
 import msgspec
 
 from .pipeline_common import COLLECTION_MANIFEST_PATH, COLLECTION_ROOT, guess_extension
-from .wire import CollectionFailure, CollectionManifest, CollectionManifestCollection, CollectionSample, dump_json
+from .wire import CollectionFailure, CollectionManifest, CollectionManifestCollection, CollectionMetadataPayload, CollectionSample, decode_json, dump_json
 
 IPFS_GATEWAYS = (
     "https://ipfs.io/ipfs/",
@@ -260,24 +260,17 @@ def normalize_urls(url: str) -> list[str]:
     return [f"{gateway}{cid_path}" for gateway in IPFS_GATEWAYS]
 
 
-def extract_image_url(payload: dict[str, object]) -> str | None:
-    for key in ("image", "image_url", "imageUrl"):
-        value = payload.get(key)
-        if isinstance(value, str) and value:
-            return value
-    return None
+def extract_image_url(payload: CollectionMetadataPayload) -> str | None:
+    return payload.image
 
 
-def fetch_json_with_fallback(client: httpx.Client, url: str) -> tuple[str, dict[str, object]]:
+def fetch_json_with_fallback(client: httpx.Client, url: str) -> tuple[str, CollectionMetadataPayload]:
     errors: list[str] = []
     for candidate in normalize_urls(url):
         try:
             response = client.get(candidate)
             response.raise_for_status()
-            payload = response.json()
-            if isinstance(payload, dict):
-                return candidate, payload
-            raise ValueError("metadata payload is not an object")
+            return candidate, decode_json(response.content, CollectionMetadataPayload)
         except Exception as error:  # noqa: BLE001
             errors.append(f"{candidate}: {error}")
     raise ValueError("; ".join(errors))

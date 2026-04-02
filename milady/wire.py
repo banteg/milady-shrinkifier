@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, Sequence, TypeVar
 
 import msgspec
 
@@ -18,14 +18,14 @@ def load_json(path: Path, type_: type[T] | Any) -> T:
     return decode_json(path.read_bytes(), type_)
 
 
-def encode_json(data: Any, *, pretty: bool = False) -> bytes:
+def encode_json(data: object, *, pretty: bool = False) -> bytes:
     encoded = msgspec.json.encode(data)
     if pretty:
         encoded = msgspec.json.format(encoded, indent=2)
     return encoded
 
 
-def dump_json(path: Path, data: Any, *, pretty: bool = True) -> None:
+def dump_json(path: Path, data: object, *, pretty: bool = True) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = encode_json(data, pretty=pretty)
     path.write_bytes(payload + (b"\n" if pretty and not payload.endswith(b"\n") else b""))
@@ -42,7 +42,7 @@ def load_jsonl(path: Path, type_: type[T] | Any) -> list[T]:
     return entries
 
 
-def dump_jsonl(path: Path, items: list[Any]) -> None:
+def dump_jsonl(path: Path, items: Sequence[object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [msgspec.json.encode(item) for item in items]
     payload = b"\n".join(lines) + (b"\n" if lines else b"")
@@ -88,6 +88,10 @@ class CollectionSample(msgspec.Struct, kw_only=True):
     local_path: str
     image_url: str | None = None
     metadata_url: str | None = None
+
+
+class CollectionMetadataPayload(msgspec.Struct, kw_only=True):
+    image: str
 
 
 class CollectionFailure(msgspec.Struct, kw_only=True):
@@ -207,7 +211,7 @@ class DiagnosticBucket(msgspec.Struct, kw_only=True):
 
 
 class RunEvaluationPolicy(msgspec.Struct, omit_defaults=True, kw_only=True):
-    headline: str = "legacy"
+    headline: str = ""
 
 
 class RunDatasetSplitSummary(msgspec.Struct, kw_only=True):
@@ -299,7 +303,7 @@ class CompareRunSummary(msgspec.Struct, kw_only=True):
 
 
 class CompareSummaryEvaluationPolicy(msgspec.Struct, kw_only=True):
-    headline: str = "legacy"
+    headline: str = ""
 
 
 class CompareSummary(msgspec.Struct, omit_defaults=True, kw_only=True):
@@ -418,6 +422,17 @@ class ReviewUndoBatchResponse(msgspec.Struct, omit_defaults=True, kw_only=True):
     batch_id: str
     undone_sha256_list: list[str]
     undone_sha256: str | None = None
+
+
+class CheckPfpResult(msgspec.Struct, omit_defaults=True, kw_only=True):
+    input: str
+    run_id: str
+    threshold: float
+    probability: float
+    matched: bool
+    local_path: str | None = None
+    url: str | None = None
+    normalized_url: str | None = None
 
 
 class ReviewUndoSingleResponse(msgspec.Struct, omit_defaults=True, kw_only=True):
