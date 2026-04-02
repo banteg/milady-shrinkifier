@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-import math
-import random
 import sqlite3
-from io import BytesIO
 from pathlib import Path
 from typing import Literal
 
 import msgspec
 import numpy as np
 import torch
-from PIL import Image, ImageEnhance, ImageFilter, ImageOps
+from PIL import Image, ImageOps
 from torch import nn
 from torch.utils.data import Dataset
 from torchvision import transforms
@@ -48,10 +45,9 @@ class DatasetEntry(msgspec.Struct, kw_only=True):
 
 
 class AvatarDataset(Dataset[tuple[torch.Tensor, int, float]]):
-    def __init__(self, entries: list[DatasetEntry], training: bool, augment: bool = True) -> None:
+    def __init__(self, entries: list[DatasetEntry], training: bool) -> None:
         self.entries = entries
         self.training = training
-        self.augment = augment
         self.to_tensor = transforms.Compose(
             [
                 transforms.ToTensor(),
@@ -66,15 +62,12 @@ class AvatarDataset(Dataset[tuple[torch.Tensor, int, float]]):
         entry = self.entries[index]
         with Image.open(entry.path) as image:
             prepared = convert_image_to_rgb(image)
-            if self.training and self.augment:
-                prepared = apply_training_augment(prepared)
-                tensor = self.to_tensor(prepared)
-            elif self.training:
+            if self.training:
                 center = prepare_inference_variant_array(prepared, "center")
                 top = prepare_inference_variant_array(prepared, "top")
                 tensor = variants_tensor_from_arrays(center, top)
             else:
-                prepared = prepare_training_base_image(prepared, training=False)
+                prepared = prepare_base_image(prepared)
                 tensor = self.to_tensor(prepared)
         label_index = POSITIVE_INDEX if entry.label == POSITIVE_LABEL else 0
         return tensor, label_index, float(entry.sample_weight)
@@ -99,44 +92,13 @@ class ExportWrapper(nn.Module):
         return self.softmax(logits)
 
 
-def prepare_training_base_image(image: Image.Image, *, training: bool) -> Image.Image:
-    if training:
-        centering = (0.5, 0.0) if random.random() < 0.5 else (0.5, 0.5)
-    else:
-        centering = (0.5, 0.5)
+def prepare_base_image(image: Image.Image) -> Image.Image:
     return ImageOps.fit(
         image,
         (MODEL_IMAGE_SIZE, MODEL_IMAGE_SIZE),
         method=Image.Resampling.BICUBIC,
-        centering=centering,
+        centering=(0.5, 0.5),
     )
-
-
-
-def apply_training_augment(image: Image.Image) -> Image.Image:
-    square = ImageOps.fit(image, (160, 160), method=Image.Resampling.BICUBIC, centering=(0.5, 0.4))
-    crop_size = random.randint(116, 154)
-    max_offset = 160 - crop_size
-    offset_x = random.randint(0, max_offset)
-    max_top_offset = max(1, math.floor(max_offset * 0.55))
-    offset_y = random.randint(0, max_top_offset)
-    cropped = square.crop((offset_x, offset_y, offset_x + crop_size, offset_y + crop_size))
-    augmented = cropped.resize((MODEL_IMAGE_SIZE, MODEL_IMAGE_SIZE), Image.Resampling.BICUBIC)
-
-    if random.random() < 0.35:
-        enhanced = ImageEnhance.Brightness(augmented).enhance(random.uniform(0.9, 1.12))
-        augmented = ImageEnhance.Contrast(enhanced).enhance(random.uniform(0.9, 1.12))
-    if random.random() < 0.25:
-        augmented = ImageEnhance.Color(augmented).enhance(random.uniform(0.92, 1.08))
-    if random.random() < 0.2:
-        augmented = augmented.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.2, 0.8)))
-    if random.random() < 0.25:
-        buffer = BytesIO()
-        augmented.save(buffer, format="JPEG", quality=random.randint(52, 86))
-        buffer.seek(0)
-        augmented = Image.open(buffer).convert("RGB")
-
-    return augmented
 
 
 def load_dataset_entries(path: Path) -> list[DatasetEntry]:
