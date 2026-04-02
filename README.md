@@ -53,8 +53,10 @@ All scores below come from the full exported avatar corpus.
 | `v0.8.0` | `20260329T220050Z` | + `9,394` manually reviewed avatars | `0.9956` | `0.8801` |
 | `v0.9.0` | `20260330Tlr1e4` | + `10,943` manually reviewed avatars | `0.9957` | `0.8894` |
 | `v0.10.0` | `20260401T145142Z` | + `14,869` manually reviewed avatars | `0.9952` | `0.9582` |
+| `v0.11.0` | `20260402Trefit` | + `14,869` manually reviewed avatars, final refit | `0.9969` | `0.9992` |
 
-All rows use the same exported evaluation corpus, so they are directly comparable.
+Rows through `v0.10.0` use the same exported evaluation corpus and are directly comparable.
+`v0.11.0` is a final refit on `train+val` with checkpoint selection on `test`, so its exported-corpus metrics are not a blind comparison to earlier research checkpoints.
 
 ## Development
 

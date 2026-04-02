@@ -1,6 +1,6 @@
 {
   "architecture": "mobilenet_v3_small",
-  "generated_at": "2026-04-01T15:29:42.097765+00:00",
+  "generated_at": "2026-04-02T10:03:52.810128+00:00",
   "input_size": 128,
   "channels": 3,
   "class_names": [
@@ -18,6 +18,6 @@
     0.225
   ],
   "positive_index": 1,
-  "threshold": 0.9555712938308716,
-  "run_id": "20260401T145142Z"
+  "threshold": 0.49651581048965454,
+  "run_id": "20260402Trefit"
 }
