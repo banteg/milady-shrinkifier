@@ -373,6 +373,7 @@ function App() {
   const [stats, setStats] = createSignal<DetectionStats>(DEFAULT_STATS);
   const [matchedAccounts, setMatchedAccounts] = createSignal<MatchedAccountMap>({});
   const [collectedAvatars, setCollectedAvatars] = createSignal<CollectedAvatarMap>({});
+  let whitelistImportInput: HTMLInputElement | undefined;
 
   const sortedAccounts = createMemo(() => Object.values(matchedAccounts()).sort(compareAccounts));
   const accountSearchTerm = createMemo(() => accountSearch().trim().toLowerCase());
@@ -489,6 +490,37 @@ function App() {
     exportCollectedAvatars(collectedAvatars(), settings().whitelistHandles);
   };
 
+  const handleExportWhitelist = () => {
+    exportWhitelistHandles(settings().whitelistHandles);
+  };
+
+  const handleImportWhitelistClick = () => {
+    whitelistImportInput?.click();
+  };
+
+  const handleImportWhitelist = async (event: Event) => {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = "";
+    if (!file) {
+      return;
+    }
+
+    try {
+      const payload = JSON.parse(await file.text()) as unknown;
+      const nextWhitelist = normalizeImportedWhitelist(payload);
+      const nextSettings = { ...settings(), whitelistHandles: nextWhitelist };
+      setSettings(nextSettings);
+      await saveSettings(nextSettings);
+    } catch (error) {
+      window.alert(
+        error instanceof Error
+          ? `Failed to import whitelist: ${error.message}`
+          : "Failed to import whitelist.",
+      );
+    }
+  };
+
   return (
     <>
       <style>{styles}</style>
@@ -566,7 +598,31 @@ function App() {
                 <h2 class="panel-title">Caught</h2>
                 <p class="section-note">Tap to exempt or un-exempt.</p>
               </div>
+              <div class="actions">
+                <button
+                  type="button"
+                  class="action-button"
+                  onClick={handleImportWhitelistClick}
+                >
+                  Import
+                </button>
+                <button
+                  type="button"
+                  class="action-button"
+                  onClick={handleExportWhitelist}
+                  disabled={settings().whitelistHandles.length === 0}
+                >
+                  Export
+                </button>
+              </div>
             </div>
+            <input
+              ref={whitelistImportInput}
+              type="file"
+              accept="application/json,.json"
+              style={{ display: "none" }}
+              onChange={(event) => void handleImportWhitelist(event)}
+            />
             <input
               class="account-search"
               type="search"
@@ -754,6 +810,38 @@ function exportCollectedAvatars(collectedAvatars: CollectedAvatarMap, whitelistH
   anchor.download = `milady-shrinkifier-avatars-${timestampForFilename(new Date())}.json`;
   anchor.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function exportWhitelistHandles(whitelistHandles: string[]): void {
+  if (whitelistHandles.length === 0) {
+    return;
+  }
+
+  const payload = {
+    version: 1,
+    exported_at: new Date().toISOString(),
+    whitelist_handles: whitelistHandles,
+  };
+
+  const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `milady-shrinkifier-whitelist-${timestampForFilename(new Date())}.json`;
+  anchor.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function normalizeImportedWhitelist(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return normalizeWhitelistHandles(value);
+  }
+  if (value && typeof value === "object" && "whitelist_handles" in value) {
+    return normalizeWhitelistHandles((value as { whitelist_handles: unknown }).whitelist_handles);
+  }
+  throw new Error("Expected a JSON array or an object with whitelist_handles.");
 }
 
 function compareCollectedAvatars(left: CollectedAvatar, right: CollectedAvatar): number {
