@@ -6,10 +6,11 @@ from io import BytesIO
 from pathlib import Path
 
 import httpx
+import numpy as np
 import torch
 from PIL import Image
 
-from .mobilenet_common import INFERENCE_CROP_VARIANTS, create_model, load_image_variants_for_inference, score_logits_to_probabilities
+from .mobilenet_common import create_model, prepare_base_image, score_logits_to_probabilities
 from .pipeline_common import MODEL_RUN_ROOT, convert_image_to_rgb
 from .wire import RunSummary, encode_json, load_json
 
@@ -95,10 +96,13 @@ def normalize_profile_image_url(url: str) -> str:
 
 def infer_probability(model: torch.nn.Module, image_bytes: bytes) -> float:
     with Image.open(BytesIO(image_bytes)) as image:
-        variants = load_image_variants_for_inference(convert_image_to_rgb(image))
+        prepared = prepare_base_image(convert_image_to_rgb(image))
+        tensor = torch.from_numpy(np.asarray(prepared, dtype=np.uint8).copy()).permute(2, 0, 1).to(dtype=torch.float32) / 255.0
+        tensor[0].sub_(0.485).div_(0.229)
+        tensor[1].sub_(0.456).div_(0.224)
+        tensor[2].sub_(0.406).div_(0.225)
     with torch.no_grad():
-        probabilities = score_logits_to_probabilities(model(variants)).view(1, len(INFERENCE_CROP_VARIANTS))
-        probability = torch.max(probabilities, dim=1).values[0]
+        probability = score_logits_to_probabilities(model(tensor.unsqueeze(0)))[0]
     return float(probability.item())
 
 
