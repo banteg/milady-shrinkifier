@@ -9,7 +9,6 @@ from time import perf_counter
 
 import numpy as np
 import torch
-import wandb
 from torch import nn
 from torch.utils.data import DataLoader
 
@@ -33,9 +32,6 @@ from .mobilenet_common import (
 from .pipeline_common import COLLECTION_MANIFEST_PATH, MODEL_RUN_ROOT, SPLIT_MANIFEST_PATH, SPLIT_ROOT, connect_db, connect_offline_cache_db
 from .wire import CollectionManifest, MetricSummary, RunDatasetSplitSummary, RunEvaluationPolicy, RunHistoryEntry, RunSummary, SplitManifest, dump_json, encode_json, load_json
 
-DEFAULT_WANDB_PROJECT = "milady-shrinkifier"
-DEFAULT_WANDB_ENTITY = "banteg-"
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train a MobileNetV3-Small binary Milady classifier.")
@@ -56,17 +52,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-id", default=datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ"))
     parser.add_argument("--cpu", action="store_true", help="Force CPU training even when MPS/CUDA is available.")
     parser.add_argument("--refit", action="store_true", help="Fit on train+val and use test as the selection/eval split for a final refit experiment.")
-    parser.add_argument(
-        "--wandb-project",
-        default=os.environ.get("WANDB_PROJECT", DEFAULT_WANDB_PROJECT),
-        help="Weights & Biases project name.",
-    )
-    parser.add_argument(
-        "--wandb-entity",
-        default=os.environ.get("WANDB_ENTITY", DEFAULT_WANDB_ENTITY),
-        help="Weights & Biases entity/user/team.",
-    )
-    parser.add_argument("--no-wandb", action="store_true", help="Disable Weights & Biases logging for this run.")
     return parser.parse_args()
 
 
@@ -118,17 +103,6 @@ def main() -> None:
             head_learning_rate,
             finetune_epochs,
         )
-        wandb_run = init_wandb(
-            args,
-            device,
-            train_entries,
-            val_entries,
-            test_entries,
-            run_dir,
-            head_warmup_epochs,
-            head_learning_rate,
-        )
-
         best_state: dict[str, torch.Tensor] | None = None
         best_threshold = 0.995
         best_selection_key = (-1.0, -1.0)
@@ -163,7 +137,6 @@ def main() -> None:
                 epoch,
                 args.epochs,
                 args.log_every,
-                wandb_run,
                 global_step,
                 scheduler,
                 phase,
@@ -184,22 +157,6 @@ def main() -> None:
                     threshold=threshold,
                 )
             )
-            if wandb_run is not None:
-                wandb.log(
-                    {
-                        "epoch": epoch,
-                        "trainer/global_step": global_step,
-                        "train/loss": train_loss,
-                        "train/lr": current_learning_rate(optimizer),
-                        "trainer/phase": 0 if phase == "warmup" else 1,
-                        "val/precision": threshold_metrics.precision,
-                        "val/recall": threshold_metrics.recall,
-                        "val/f1": threshold_metrics.f1,
-                        "val/threshold": threshold,
-                        "timing/epoch_seconds": epoch_duration_seconds,
-                        "timing/total_elapsed_seconds": perf_counter() - training_started_at,
-                    }
-                )
             selection_key = (
                 threshold_metrics.recall,
                 threshold_metrics.f1,
@@ -296,36 +253,6 @@ def main() -> None:
             checkpoint_path=str(checkpoint_path),
         )
         dump_json(run_dir / "summary.json", summary)
-        if wandb_run is not None:
-            wandb.log(
-                {
-                    "epoch": best_epoch,
-                    "best/epoch": best_epoch,
-                    "best/threshold": best_threshold,
-                    "best/val_precision": best_val_metrics.precision,
-                    "best/val_recall": best_val_metrics.recall,
-                    "best/val_f1": best_val_metrics.f1,
-                    "headline/val_precision": best_val_metrics.precision,
-                    "headline/val_recall": best_val_metrics.recall,
-                    "headline/val_f1": best_val_metrics.f1,
-                    "test/precision": test_metrics.precision,
-                    "test/recall": test_metrics.recall,
-                    "test/f1": test_metrics.f1,
-                    "test/accuracy": test_metrics.accuracy,
-                    "headline/test_precision": test_metrics.precision,
-                    "headline/test_recall": test_metrics.recall,
-                    "headline/test_f1": test_metrics.f1,
-                }
-            )
-            summary_artifact = wandb.Artifact(f"{args.run_id}-summary", type="training-summary")
-            summary_artifact.add_file(local_path=str(run_dir / "summary.json"), name="summary.json")
-            summary_artifact.add_file(local_path=str(checkpoint_path), name="best.pt")
-            wandb_run.log_artifact(summary_artifact)
-            wandb_run.summary["checkpoint_path"] = str(checkpoint_path)
-            wandb_run.summary["run_dir"] = str(run_dir)
-            wandb_run.summary["best_epoch"] = best_epoch
-            wandb_run.summary["best_threshold"] = best_threshold
-            wandb_run.finish()
         print(
             "[done] "
             f"best_epoch={best_epoch} "
@@ -394,78 +321,6 @@ def parse_timestamp(value: str) -> datetime:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
-
-
-def init_wandb(
-    args: argparse.Namespace,
-    device: torch.device,
-    train_entries: list[DatasetEntry],
-    val_entries: list[DatasetEntry],
-    test_entries: list[DatasetEntry],
-    run_dir: Path,
-    head_warmup_epochs: int,
-    head_learning_rate: float,
-) -> wandb.sdk.wandb_run.Run | None:
-    if args.no_wandb:
-        print("[wandb] disabled via --no-wandb", flush=True)
-        return None
-    if not args.wandb_project:
-        print("[wandb] disabled because WANDB_PROJECT/--wandb-project is not set", flush=True)
-        return None
-    config = {
-        "run_id": args.run_id,
-        "architecture": "mobilenet_v3_small",
-        "device": device.type,
-        "epochs": args.epochs,
-        "batch_size": args.batch_size,
-        "seed": args.seed,
-        "num_workers": args.num_workers,
-        "prefetch_factor": args.prefetch_factor if args.num_workers > 0 else None,
-        "pin_memory": False,
-        "head_warmup_epochs": head_warmup_epochs,
-        "scheduler": args.scheduler,
-        "head_learning_rate": head_learning_rate,
-        "log_every": args.log_every,
-        "learning_rate": args.learning_rate,
-        "label_smoothing": args.label_smoothing,
-        "refit": args.refit,
-        "weight_decay": args.weight_decay,
-        "patience": args.patience,
-        "precision_floor": args.precision_floor,
-        "train_size": len(train_entries),
-        "val_size": len(val_entries),
-        "test_size": len(test_entries),
-        "train_milady": sum(1 for entry in train_entries if entry.label == "milady"),
-        "train_not_milady": sum(1 for entry in train_entries if entry.label != "milady"),
-        "image_size": MODEL_IMAGE_SIZE,
-        "mean": MODEL_MEAN,
-        "std": MODEL_STD,
-        "artifacts_dir": str(run_dir),
-    }
-    run = wandb.init(
-        project=args.wandb_project,
-        entity=args.wandb_entity,
-        name=args.run_id,
-        job_type="train-classifier",
-        config=config,
-    )
-    run.define_metric("epoch")
-    run.define_metric("trainer/global_step")
-    run.define_metric("train/*", step_metric="trainer/global_step")
-    run.define_metric("val/*", step_metric="epoch")
-    run.define_metric("test/*", step_metric="epoch")
-    run.define_metric("best/*", step_metric="epoch")
-    run.define_metric("timing/batch_elapsed_seconds", step_metric="trainer/global_step")
-    run.define_metric("timing/epoch_eta_seconds", step_metric="trainer/global_step")
-    run.define_metric("timing/epoch_seconds", step_metric="epoch")
-    run.define_metric("timing/total_elapsed_seconds", step_metric="epoch")
-    print(
-        f"[wandb] enabled project={args.wandb_project}"
-        + (f" entity={args.wandb_entity}" if args.wandb_entity else "")
-        + (f" url={run.url}" if getattr(run, "url", None) else ""),
-        flush=True,
-    )
-    return run
 
 
 def default_num_workers() -> int:
@@ -558,7 +413,6 @@ def run_epoch(
     epoch: int,
     total_epochs: int,
     log_every: int,
-    wandb_run: wandb.sdk.wandb_run.Run | None,
     global_step_base: int,
     scheduler: torch.optim.lr_scheduler.LRScheduler | None,
     phase: str,
@@ -587,26 +441,12 @@ def run_epoch(
             elapsed_seconds = perf_counter() - epoch_started_at
             average_batch_seconds = elapsed_seconds / max(1, batch_index)
             epoch_eta_seconds = average_batch_seconds * max(0, total_batches - batch_index)
-            global_step = global_step_base + batch_index
             print(
                 f"[epoch {epoch}/{total_epochs}] batch {batch_index}/{total_batches} "
                 f"loss={loss.item():.4f} avg_loss={average_loss:.4f} "
                 f"elapsed={format_duration(elapsed_seconds)} eta={format_duration(epoch_eta_seconds)}",
                 flush=True,
             )
-            if wandb_run is not None:
-                wandb.log(
-                    {
-                        "epoch": epoch,
-                        "trainer/global_step": global_step,
-                        "trainer/phase": 0 if phase == "warmup" else 1,
-                        "train/batch_loss": float(loss.item()),
-                        "train/batch_avg_loss": average_loss,
-                        "train/lr": current_learning_rate(optimizer),
-                        "timing/batch_elapsed_seconds": elapsed_seconds,
-                        "timing/epoch_eta_seconds": epoch_eta_seconds,
-                    }
-                )
     return total_loss / max(1, total_items), global_step_base + total_batches
 
 
