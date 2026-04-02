@@ -9,8 +9,10 @@ import type {
   CollectedAvatarMap,
   DetectionStats,
   ExtensionSettings,
+  FilterMode,
   MatchedAccountMap,
 } from "./types";
+import { isFilterMode } from "./types";
 
 export async function loadSettings(): Promise<ExtensionSettings> {
   const stored = await chrome.storage.sync.get({
@@ -81,12 +83,8 @@ export async function resetCollectedAvatars(): Promise<void> {
   await saveCollectedAvatars(DEFAULT_COLLECTED_AVATARS);
 }
 
-function isMode(value: unknown): value is ExtensionSettings["mode"] {
-  return value === "off" || value === "hide" || value === "fade" || value === "debug";
-}
-
-export function normalizeFilterMode(value: unknown): ExtensionSettings["mode"] {
-  return isMode(value) ? value : DEFAULT_SETTINGS.mode;
+export function normalizeFilterMode(value: unknown): FilterMode {
+  return isFilterMode(value) ? value : DEFAULT_SETTINGS.mode;
 }
 
 export function normalizeWhitelistHandles(value: unknown): string[] {
@@ -105,19 +103,18 @@ export function normalizeWhitelistHandles(value: unknown): string[] {
 }
 
 export function normalizeStats(value: unknown): DetectionStats {
-  if (!value || typeof value !== "object") {
+  if (!isRecord(value)) {
     return DEFAULT_STATS;
   }
 
-  const candidate = value as Partial<DetectionStats>;
   return {
-    tweetsScanned: readNumber(candidate.tweetsScanned),
-    avatarsChecked: readNumber(candidate.avatarsChecked),
-    cacheHits: readNumber(candidate.cacheHits),
-    postsMatched: readNumber(candidate.postsMatched),
-    modelMatches: readNumber((candidate as Record<string, unknown>).modelMatches),
-    errors: readNumber(candidate.errors),
-    lastMatchAt: typeof candidate.lastMatchAt === "string" ? candidate.lastMatchAt : null,
+    tweetsScanned: readNumber(value.tweetsScanned),
+    avatarsChecked: readNumber(value.avatarsChecked),
+    cacheHits: readNumber(value.cacheHits),
+    postsMatched: readNumber(value.postsMatched),
+    modelMatches: readNumber(value.modelMatches),
+    errors: readNumber(value.errors),
+    lastMatchAt: readNullableString(value.lastMatchAt),
   };
 }
 
@@ -126,20 +123,19 @@ function readNumber(value: unknown): number {
 }
 
 export function normalizeMatchedAccounts(value: unknown): MatchedAccountMap {
-  if (!value || typeof value !== "object") {
+  if (!isRecord(value)) {
     return DEFAULT_MATCHED_ACCOUNTS;
   }
 
   const normalized: MatchedAccountMap = {};
 
-  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-    if (!entry || typeof entry !== "object") {
+  for (const [key, entry] of Object.entries(value)) {
+    if (!isRecord(entry)) {
       continue;
     }
 
-    const candidate = entry as Record<string, unknown>;
     const handle = normalizeHandle(
-      typeof candidate.handle === "string" && candidate.handle.length > 0 ? candidate.handle : key,
+      readString(entry.handle) ?? key,
     );
     if (!handle) {
       continue;
@@ -147,9 +143,9 @@ export function normalizeMatchedAccounts(value: unknown): MatchedAccountMap {
 
     normalized[handle] = {
       handle,
-      displayName: typeof candidate.displayName === "string" ? candidate.displayName : null,
-      postsMatched: readNumber(candidate.postsMatched),
-      lastMatchedAt: typeof candidate.lastMatchedAt === "string" ? candidate.lastMatchedAt : null,
+      displayName: readNullableString(entry.displayName),
+      postsMatched: readNumber(entry.postsMatched),
+      lastMatchedAt: readNullableString(entry.lastMatchedAt),
     };
   }
 
@@ -157,49 +153,51 @@ export function normalizeMatchedAccounts(value: unknown): MatchedAccountMap {
 }
 
 export function normalizeCollectedAvatars(value: unknown): CollectedAvatarMap {
-  if (!value || typeof value !== "object") {
+  if (!isRecord(value)) {
     return DEFAULT_COLLECTED_AVATARS;
   }
 
   const normalized: CollectedAvatarMap = {};
 
-  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-    if (!entry || typeof entry !== "object") {
+  for (const [key, entry] of Object.entries(value)) {
+    if (!isRecord(entry)) {
       continue;
     }
 
-    const candidate = entry as Record<string, unknown>;
-    const normalizedUrl = typeof candidate.normalizedUrl === "string" && candidate.normalizedUrl.length > 0
-      ? candidate.normalizedUrl
-      : key;
+    const normalizedUrl = readString(entry.normalizedUrl) ?? key;
     if (!normalizedUrl) {
       continue;
     }
 
     normalized[normalizedUrl] = {
       normalizedUrl,
-      originalUrl:
-        typeof candidate.originalUrl === "string" && candidate.originalUrl.length > 0
-          ? candidate.originalUrl
-          : normalizedUrl,
-      handles: uniqueStrings(candidate.handles, normalizeHandle),
-      displayNames: uniqueStrings(candidate.displayNames),
-      sourceSurfaces: uniqueStrings(candidate.sourceSurfaces),
-      seenCount: readNumber(candidate.seenCount),
-      firstSeenAt:
-        typeof candidate.firstSeenAt === "string" ? candidate.firstSeenAt : new Date(0).toISOString(),
-      lastSeenAt:
-        typeof candidate.lastSeenAt === "string" ? candidate.lastSeenAt : new Date(0).toISOString(),
-      exampleProfileUrl:
-        typeof candidate.exampleProfileUrl === "string" ? candidate.exampleProfileUrl : null,
-      exampleNotificationUrl:
-        typeof candidate.exampleNotificationUrl === "string" ? candidate.exampleNotificationUrl : null,
-      exampleTweetUrl: typeof candidate.exampleTweetUrl === "string" ? candidate.exampleTweetUrl : null,
-      whitelisted: candidate.whitelisted === true,
+      originalUrl: readString(entry.originalUrl) ?? normalizedUrl,
+      handles: uniqueStrings(entry.handles, normalizeHandle),
+      displayNames: uniqueStrings(entry.displayNames),
+      sourceSurfaces: uniqueStrings(entry.sourceSurfaces),
+      seenCount: readNumber(entry.seenCount),
+      firstSeenAt: readString(entry.firstSeenAt) ?? new Date(0).toISOString(),
+      lastSeenAt: readString(entry.lastSeenAt) ?? new Date(0).toISOString(),
+      exampleProfileUrl: readNullableString(entry.exampleProfileUrl),
+      exampleNotificationUrl: readNullableString(entry.exampleNotificationUrl),
+      exampleTweetUrl: readNullableString(entry.exampleTweetUrl),
+      whitelisted: entry.whitelisted === true,
     };
   }
 
   return normalized;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object";
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function readNullableString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
 }
 
 function uniqueStrings(

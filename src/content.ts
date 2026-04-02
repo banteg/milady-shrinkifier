@@ -35,6 +35,7 @@ import type {
   WorkerRequest,
   WorkerResponse,
 } from "./shared/types";
+import { isFilterMode } from "./shared/types";
 
 const STYLE_ID = "milady-shrinkifier-style";
 const ARTICLE_SELECTOR = 'article[data-testid="tweet"]';
@@ -769,10 +770,6 @@ async function scoreWithOnnx(
     };
     worker.postMessage(payload, [modelTensor.buffer]);
   });
-}
-
-function isFilterMode(value: unknown): value is ExtensionSettings["mode"] {
-  return value === "off" || value === "hide" || value === "fade" || value === "debug";
 }
 
 function incrementMatchStats(result: DetectionResult): void {

@@ -1,5 +1,9 @@
 export type FilterMode = "off" | "hide" | "fade" | "debug";
 
+export function isFilterMode(value: unknown): value is FilterMode {
+  return value === "off" || value === "hide" || value === "fade" || value === "debug";
+}
+
 export interface ExtensionSettings {
   mode: FilterMode;
   whitelistHandles: string[];
