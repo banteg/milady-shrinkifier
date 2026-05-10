@@ -30,6 +30,8 @@ Keep the CDP attachment open:
 pnpm run debug:chrome:attach:keep-open
 ```
 
+Avatar sightings are stored in extension-owned IndexedDB through the MV3 background service worker. The first run after upgrading migrates the legacy `chrome.storage.local.collectedAvatars` object into the `avatars` object store; the legacy key is preserved until the user resets avatar data.
+
 ## Paths
 
 - Runtime model artifacts live in `public/models/` and `public/generated/`.
