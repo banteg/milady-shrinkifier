@@ -45,6 +45,36 @@ export interface CollectedAvatar {
 
 export type CollectedAvatarMap = Record<string, CollectedAvatar>;
 
+export interface CollectedAvatarSummary {
+  avatarCount: number;
+  totalSightings: number;
+}
+
+export interface CollectedAvatarRecord {
+  normalizedUrl: string;
+  originalUrl: string;
+  handle: string | null;
+  displayName: string | null;
+  whitelisted: boolean;
+  exampleTweetUrl: string | null;
+  exampleNotificationUrl: string | null;
+  sourceSurface: string;
+}
+
+export type AvatarStorageRequest =
+  | { type: "avatars:list" }
+  | { type: "avatars:summary" }
+  | { type: "avatars:recordMany"; records: CollectedAvatarRecord[] }
+  | { type: "avatars:putMany"; avatars: CollectedAvatar[] }
+  | { type: "avatars:replace"; avatars: CollectedAvatar[] }
+  | { type: "avatars:reset" };
+
+export type AvatarStorageResponse =
+  | { ok: true; avatars: CollectedAvatar[] }
+  | { ok: true; summary: CollectedAvatarSummary }
+  | { ok: true }
+  | { ok: false; error: string };
+
 export interface ModelMetadata {
   architecture: string;
   class_names: [string, string];

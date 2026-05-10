@@ -3,11 +3,11 @@ import { render } from "solid-js/web";
 
 import { DEFAULT_SETTINGS, DEFAULT_STATS } from "./shared/constants";
 import {
+  loadCollectedAvatarSummary,
   loadCollectedAvatars,
   loadMatchedAccounts,
   loadSettings,
   loadStats,
-  normalizeCollectedAvatars,
   normalizeFilterMode,
   normalizeMatchedAccounts,
   normalizeStats,
@@ -20,6 +20,7 @@ import {
 import type {
   CollectedAvatar,
   CollectedAvatarMap,
+  CollectedAvatarSummary,
   DetectionStats,
   FilterMode,
   MatchedAccount,
@@ -372,7 +373,11 @@ function App() {
   const [settings, setSettings] = createSignal(DEFAULT_SETTINGS);
   const [stats, setStats] = createSignal<DetectionStats>(DEFAULT_STATS);
   const [matchedAccounts, setMatchedAccounts] = createSignal<MatchedAccountMap>({});
-  const [collectedAvatars, setCollectedAvatars] = createSignal<CollectedAvatarMap>({});
+  const [avatarSummary, setAvatarSummary] = createSignal<CollectedAvatarSummary>({
+    avatarCount: 0,
+    totalSightings: 0,
+  });
+  const [exportingAvatars, setExportingAvatars] = createSignal(false);
   let whitelistImportInput: HTMLInputElement | undefined;
 
   const sortedAccounts = createMemo(() => Object.values(matchedAccounts()).sort(compareAccounts));
@@ -405,25 +410,20 @@ function App() {
     const rate = (stats().postsMatched / seen) * 100;
     return `${rate.toFixed(rate >= 10 ? 1 : 2)}%`;
   });
-  const totalAvatarSightings = createMemo(() =>
-    Object.values(collectedAvatars()).reduce((total, avatar) => total + avatar.seenCount, 0),
-  );
   const lastHitLabel = createMemo(() => {
     const value = stats().lastMatchAt;
     return value ? formatDate(value) : "Never";
   });
 
   onMount(async () => {
-    const [nextSettings, nextStats, nextMatchedAccounts, nextCollectedAvatars] = await Promise.all([
+    const [nextSettings, nextStats, nextMatchedAccounts] = await Promise.all([
       loadSettings(),
       loadStats(),
       loadMatchedAccounts(),
-      loadCollectedAvatars(),
     ]);
     setSettings(nextSettings);
     setStats(nextStats);
     setMatchedAccounts(nextMatchedAccounts);
-    setCollectedAvatars(nextCollectedAvatars);
 
     const handleStorageChange: Parameters<typeof chrome.storage.onChanged.addListener>[0] = (
       changes,
@@ -447,9 +447,6 @@ function App() {
         }
         if (changes.matchedAccounts) {
           setMatchedAccounts(normalizeMatchedAccounts(changes.matchedAccounts.newValue));
-        }
-        if (changes.collectedAvatars) {
-          setCollectedAvatars(normalizeCollectedAvatars(changes.collectedAvatars.newValue));
         }
       }
     };
@@ -483,11 +480,16 @@ function App() {
 
   const handleResetAvatars = async () => {
     await resetCollectedAvatars();
-    setCollectedAvatars(await loadCollectedAvatars());
+    setAvatarSummary(await loadCollectedAvatarSummary());
   };
 
-  const handleExportAvatars = () => {
-    exportCollectedAvatars(collectedAvatars(), settings().whitelistHandles);
+  const handleExportAvatars = async () => {
+    setExportingAvatars(true);
+    try {
+      exportCollectedAvatars(await loadCollectedAvatars(), settings().whitelistHandles);
+    } finally {
+      setExportingAvatars(false);
+    }
   };
 
   const handleExportWhitelist = () => {
@@ -496,6 +498,13 @@ function App() {
 
   const handleImportWhitelistClick = () => {
     whitelistImportInput?.click();
+  };
+
+  const selectTab = async (nextTab: TabId) => {
+    setTab(nextTab);
+    if (nextTab === "dataset") {
+      setAvatarSummary(await loadCollectedAvatarSummary());
+    }
   };
 
   const handleImportWhitelist = async (event: Event) => {
@@ -536,7 +545,7 @@ function App() {
                 type="button"
                 class="tab"
                 data-active={String(tab() === item.id)}
-                onClick={() => setTab(item.id)}
+                onClick={() => void selectTab(item.id)}
               >
                 {item.label}
               </button>
@@ -700,16 +709,16 @@ function App() {
                 <button
                   type="button"
                   class="action-button"
-                  onClick={handleExportAvatars}
-                  disabled={Object.keys(collectedAvatars()).length === 0}
+                  onClick={() => void handleExportAvatars()}
+                  disabled={avatarSummary().avatarCount === 0 || exportingAvatars()}
                 >
-                  Export
+                  {exportingAvatars() ? "Exporting" : "Export"}
                 </button>
                 <button
                   type="button"
                   class="action-button"
                   onClick={() => void handleResetAvatars()}
-                  disabled={Object.keys(collectedAvatars()).length === 0}
+                  disabled={avatarSummary().avatarCount === 0}
                 >
                   Reset
                 </button>
@@ -717,8 +726,8 @@ function App() {
             </div>
             <div class="dataset-summary">
               <dl class="stats-grid">
-                <div><dt>Unique avatars</dt><dd>{formatNumber(Object.keys(collectedAvatars()).length)}</dd></div>
-                <div><dt>Total sightings</dt><dd>{formatNumber(totalAvatarSightings())}</dd></div>
+                <div><dt>Unique avatars</dt><dd>{formatNumber(avatarSummary().avatarCount)}</dd></div>
+                <div><dt>Total sightings</dt><dd>{formatNumber(avatarSummary().totalSightings)}</dd></div>
               </dl>
             </div>
             <p class="footnote">Collected entries are local-only until you export them.</p>

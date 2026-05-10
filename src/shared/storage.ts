@@ -6,7 +6,12 @@ import {
 } from "./constants";
 import { normalizeHandle } from "./account-core";
 import type {
+  AvatarStorageRequest,
+  AvatarStorageResponse,
+  CollectedAvatar,
   CollectedAvatarMap,
+  CollectedAvatarRecord,
+  CollectedAvatarSummary,
   DetectionStats,
   ExtensionSettings,
   FilterMode,
@@ -59,15 +64,25 @@ export async function saveMatchedAccounts(matchedAccounts: MatchedAccountMap): P
 }
 
 export async function loadCollectedAvatars(): Promise<CollectedAvatarMap> {
-  const stored = await chrome.storage.local.get({
-    collectedAvatars: DEFAULT_COLLECTED_AVATARS,
-  });
-  return normalizeCollectedAvatars(stored.collectedAvatars);
+  const response = await sendAvatarStorageRequest({ type: "avatars:list" });
+  if (!("avatars" in response)) {
+    throw new Error("Avatar storage returned no avatar list");
+  }
+  return normalizeCollectedAvatarArray(response.avatars);
+}
+
+export async function loadCollectedAvatarSummary(): Promise<CollectedAvatarSummary> {
+  const response = await sendAvatarStorageRequest({ type: "avatars:summary" });
+  if (!("summary" in response)) {
+    throw new Error("Avatar storage returned no summary");
+  }
+  return response.summary;
 }
 
 export async function saveCollectedAvatars(collectedAvatars: CollectedAvatarMap): Promise<void> {
-  await chrome.storage.local.set({
-    collectedAvatars,
+  await sendAvatarStorageRequest({
+    type: "avatars:replace",
+    avatars: Object.values(collectedAvatars),
   });
 }
 
@@ -80,7 +95,21 @@ export async function resetMatchedAccounts(): Promise<void> {
 }
 
 export async function resetCollectedAvatars(): Promise<void> {
-  await saveCollectedAvatars(DEFAULT_COLLECTED_AVATARS);
+  await sendAvatarStorageRequest({ type: "avatars:reset" });
+}
+
+export async function saveCollectedAvatarBatch(avatars: CollectedAvatar[]): Promise<void> {
+  if (avatars.length === 0) {
+    return;
+  }
+  await sendAvatarStorageRequest({ type: "avatars:putMany", avatars });
+}
+
+export async function recordCollectedAvatarBatch(records: CollectedAvatarRecord[]): Promise<void> {
+  if (records.length === 0) {
+    return;
+  }
+  await sendAvatarStorageRequest({ type: "avatars:recordMany", records });
 }
 
 export function normalizeFilterMode(value: unknown): FilterMode {
@@ -186,6 +215,42 @@ export function normalizeCollectedAvatars(value: unknown): CollectedAvatarMap {
   }
 
   return normalized;
+}
+
+export function normalizeCollectedAvatarArray(value: unknown): CollectedAvatarMap {
+  if (!Array.isArray(value)) {
+    return DEFAULT_COLLECTED_AVATARS;
+  }
+
+  const normalized: CollectedAvatarMap = {};
+  for (const entry of value) {
+    if (!isRecord(entry)) {
+      continue;
+    }
+    const normalizedUrl = readString(entry.normalizedUrl);
+    if (!normalizedUrl) {
+      continue;
+    }
+    const entryMap = normalizeCollectedAvatars({ [normalizedUrl]: entry });
+    const normalizedEntry = entryMap[normalizedUrl];
+    if (normalizedEntry) {
+      normalized[normalizedUrl] = normalizedEntry;
+    }
+  }
+  return normalized;
+}
+
+async function sendAvatarStorageRequest(
+  request: AvatarStorageRequest,
+): Promise<Exclude<AvatarStorageResponse, { ok: false }>> {
+  const response = await chrome.runtime.sendMessage(request) as AvatarStorageResponse | undefined;
+  if (!response) {
+    throw new Error("Avatar storage did not respond");
+  }
+  if (!response.ok) {
+    throw new Error(response.error);
+  }
+  return response;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

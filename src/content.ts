@@ -13,20 +13,18 @@ import {
 } from "./shared/image-core";
 import { normalizeHandle } from "./shared/account-core";
 import {
-  loadCollectedAvatars,
   loadMatchedAccounts,
   loadSettings,
   loadStats,
-  normalizeCollectedAvatars,
   normalizeMatchedAccounts,
   normalizeStats,
   normalizeWhitelistHandles,
-  saveCollectedAvatars,
+  recordCollectedAvatarBatch,
   saveMatchedAccounts,
   saveStats,
 } from "./shared/storage";
 import type {
-  CollectedAvatarMap,
+  CollectedAvatarRecord,
   DetectionStats,
   DetectionResult,
   ExtensionSettings,
@@ -41,6 +39,9 @@ const STYLE_ID = "milady-shrinkifier-style";
 const ARTICLE_SELECTOR = 'article[data-testid="tweet"]';
 const NOTIFICATION_SELECTOR = 'article[data-testid="notification"]';
 const USER_CELL_SELECTOR = '[data-testid="UserCell"]';
+const FAST_STATE_WRITE_DELAY_MS = 2_000;
+const AVATAR_STATE_WRITE_DELAY_MS = 2_000;
+const AVATAR_STATE_WRITE_IDLE_TIMEOUT_MS = 10_000;
 const cache = new Map<string, Promise<DetectionResult>>();
 const processed = new WeakMap<HTMLElement, string>();
 const processedNotifications = new WeakMap<HTMLElement, string>();
@@ -63,8 +64,14 @@ let scanScheduled = false;
 let delayedScanTimer: number | null = null;
 let stats: DetectionStats | null = null;
 let matchedAccounts: MatchedAccountMap | null = null;
-let collectedAvatars: CollectedAvatarMap | null = null;
-let localStateWriteScheduled = false;
+let statsDirty = false;
+let matchedAccountsDirty = false;
+let collectedAvatarsDirty = false;
+let dirtyCollectedAvatarRecords: CollectedAvatarRecord[] = [];
+let fastStateWriteTimer: number | null = null;
+let cancelAvatarStateWrite: (() => void) | null = null;
+let fastStateWriteInFlight = false;
+let avatarStateWriteInFlight = false;
 
 interface ResolvedModel {
   metadata: ModelMetadata;
@@ -76,11 +83,10 @@ void boot();
 
 async function boot(): Promise<void> {
   injectStyles();
-  [settings, stats, matchedAccounts, collectedAvatars] = await Promise.all([
+  [settings, stats, matchedAccounts] = await Promise.all([
     loadSettings(),
     loadStats(),
     loadMatchedAccounts(),
-    loadCollectedAvatars(),
   ]);
   observeStorage();
   visibilityObserver = new IntersectionObserver(handleVisibilityChange, {
@@ -104,6 +110,14 @@ async function boot(): Promise<void> {
   });
   scheduleProcessVisibleTweets();
   scheduleDelayedProcessVisibleTweets();
+  window.addEventListener("pagehide", () => {
+    void flushAllLocalState("pagehide");
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") {
+      void flushAllLocalState("hidden");
+    }
+  });
 }
 
 async function processVisibleTweets(): Promise<void> {
@@ -678,10 +692,6 @@ function observeStorage(): void {
     if (area === "local" && changes.matchedAccounts) {
       matchedAccounts = normalizeMatchedAccounts(changes.matchedAccounts.newValue);
     }
-
-    if (area === "local" && changes.collectedAvatars) {
-      collectedAvatars = normalizeCollectedAvatars(changes.collectedAvatars.newValue);
-    }
   });
 }
 
@@ -781,7 +791,7 @@ function incrementMatchStats(result: DetectionResult): void {
     return;
   }
   stats.lastMatchAt = new Date().toISOString();
-  scheduleLocalStateWrite();
+  markStatsDirty();
 }
 
 function incrementStat(key: keyof Omit<DetectionStats, "lastMatchAt">): void {
@@ -789,7 +799,7 @@ function incrementStat(key: keyof Omit<DetectionStats, "lastMatchAt">): void {
     return;
   }
   stats[key] += 1;
-  scheduleLocalStateWrite();
+  markStatsDirty();
 }
 
 function recordMatchedAccount(handle: string, displayName: string | null): void {
@@ -804,7 +814,7 @@ function recordMatchedAccount(handle: string, displayName: string | null): void 
     postsMatched: (existing?.postsMatched ?? 0) + 1,
     lastMatchedAt: new Date().toISOString(),
   };
-  scheduleLocalStateWrite();
+  markMatchedAccountsDirty();
 }
 
 function recordCollectedAvatar(input: {
@@ -817,61 +827,156 @@ function recordCollectedAvatar(input: {
   sourceSurface: string;
   result?: DetectionResult;
 }): void {
-  if (!collectedAvatars) {
-    return;
-  }
-
-  const existing = collectedAvatars[input.normalizedUrl];
-  const now = new Date().toISOString();
-  collectedAvatars[input.normalizedUrl] = {
+  dirtyCollectedAvatarRecords.push({
     normalizedUrl: input.normalizedUrl,
-    originalUrl: input.originalUrl || existing?.originalUrl || input.normalizedUrl,
-    handles: mergeUniqueStrings(existing?.handles, input.author?.handle ?? null, true),
-    displayNames: mergeUniqueStrings(existing?.displayNames, input.author?.displayName ?? null, false),
-    sourceSurfaces: mergeUniqueStrings(existing?.sourceSurfaces, input.sourceSurface, false),
-    seenCount: (existing?.seenCount ?? 0) + 1,
-    firstSeenAt: existing?.firstSeenAt ?? now,
-    lastSeenAt: now,
-    exampleProfileUrl:
-      existing?.exampleProfileUrl ?? (input.author ? toAbsoluteUrl(`/${input.author.handle}`) : null),
-    exampleNotificationUrl: existing?.exampleNotificationUrl ?? input.exampleNotificationUrl,
-    exampleTweetUrl: existing?.exampleTweetUrl ?? input.exampleTweetUrl,
-    whitelisted: input.whitelisted || existing?.whitelisted === true,
-  };
-  scheduleLocalStateWrite();
+    originalUrl: input.originalUrl,
+    handle: input.author?.handle ?? null,
+    displayName: input.author?.displayName ?? null,
+    whitelisted: input.whitelisted,
+    exampleTweetUrl: input.exampleTweetUrl,
+    exampleNotificationUrl: input.exampleNotificationUrl,
+    sourceSurface: input.sourceSurface,
+  });
+  markCollectedAvatarsDirty();
 }
 
-function scheduleLocalStateWrite(): void {
-  if (localStateWriteScheduled || !stats || !matchedAccounts || !collectedAvatars) {
+function markStatsDirty(): void {
+  statsDirty = true;
+  scheduleFastLocalStateWrite();
+}
+
+function markMatchedAccountsDirty(): void {
+  matchedAccountsDirty = true;
+  scheduleFastLocalStateWrite();
+}
+
+function markCollectedAvatarsDirty(): void {
+  collectedAvatarsDirty = true;
+  scheduleAvatarLocalStateWrite();
+}
+
+function scheduleFastLocalStateWrite(): void {
+  if (fastStateWriteTimer !== null) {
     return;
   }
-  localStateWriteScheduled = true;
-  window.setTimeout(async () => {
-    localStateWriteScheduled = false;
-    if (!stats || !matchedAccounts || !collectedAvatars) {
+
+  fastStateWriteTimer = window.setTimeout(() => {
+    void flushFastLocalState("timer");
+  }, FAST_STATE_WRITE_DELAY_MS);
+}
+
+function scheduleAvatarLocalStateWrite(): void {
+  if (cancelAvatarStateWrite) {
+    return;
+  }
+
+  cancelAvatarStateWrite = scheduleIdleCallback(() => {
+    cancelAvatarStateWrite = null;
+    void flushAvatarLocalState("idle");
+  }, AVATAR_STATE_WRITE_DELAY_MS, AVATAR_STATE_WRITE_IDLE_TIMEOUT_MS);
+}
+
+async function flushAllLocalState(reason: string): Promise<void> {
+  await Promise.all([
+    flushFastLocalState(reason),
+    flushAvatarLocalState(reason),
+  ]);
+}
+
+async function flushFastLocalState(reason: string): Promise<void> {
+  if (fastStateWriteTimer !== null) {
+    window.clearTimeout(fastStateWriteTimer);
+    fastStateWriteTimer = null;
+  }
+  if (fastStateWriteInFlight || (!statsDirty && !matchedAccountsDirty)) {
+    return;
+  }
+  if (!stats && !matchedAccounts) {
+    return;
+  }
+
+  const statsSnapshot = statsDirty ? stats : null;
+  const matchedAccountsSnapshot = matchedAccountsDirty ? matchedAccounts : null;
+  statsDirty = false;
+  matchedAccountsDirty = false;
+  fastStateWriteInFlight = true;
+  try {
+    await Promise.all([
+      statsSnapshot ? saveStats(statsSnapshot) : Promise.resolve(),
+      matchedAccountsSnapshot ? saveMatchedAccounts(matchedAccountsSnapshot) : Promise.resolve(),
+    ]);
+  } catch (error) {
+    console.error("Milady local state write failed", error);
+    statsDirty = statsDirty || !!statsSnapshot;
+    matchedAccountsDirty = matchedAccountsDirty || !!matchedAccountsSnapshot;
+    scheduleFastLocalStateWrite();
+  } finally {
+    fastStateWriteInFlight = false;
+    if (statsDirty || matchedAccountsDirty) {
+      scheduleFastLocalStateWrite();
+    }
+  }
+}
+
+async function flushAvatarLocalState(reason: string): Promise<void> {
+  if (cancelAvatarStateWrite) {
+    cancelAvatarStateWrite();
+    cancelAvatarStateWrite = null;
+  }
+  if (avatarStateWriteInFlight || !collectedAvatarsDirty || dirtyCollectedAvatarRecords.length === 0) {
+    return;
+  }
+
+  const collectedAvatarRecordsSnapshot = dirtyCollectedAvatarRecords;
+  dirtyCollectedAvatarRecords = [];
+  collectedAvatarsDirty = false;
+  avatarStateWriteInFlight = true;
+  try {
+    await recordCollectedAvatarBatch(collectedAvatarRecordsSnapshot);
+  } catch (error) {
+    console.error("Milady avatar corpus write failed", error);
+    dirtyCollectedAvatarRecords = [
+      ...collectedAvatarRecordsSnapshot,
+      ...dirtyCollectedAvatarRecords,
+    ];
+    collectedAvatarsDirty = true;
+    scheduleAvatarLocalStateWrite();
+  } finally {
+    avatarStateWriteInFlight = false;
+    if (collectedAvatarsDirty) {
+      scheduleAvatarLocalStateWrite();
+    }
+  }
+}
+
+function scheduleIdleCallback(
+  callback: () => void,
+  delayMs: number,
+  timeoutMs: number,
+): () => void {
+  const idleWindow = window as typeof window & {
+    requestIdleCallback?: (
+      callback: IdleRequestCallback,
+      options?: IdleRequestOptions,
+    ) => number;
+    cancelIdleCallback?: (handle: number) => void;
+  };
+
+  let idleHandle: number | null = null;
+  const delayHandle = window.setTimeout(() => {
+    if (typeof idleWindow.requestIdleCallback === "function") {
+      idleHandle = idleWindow.requestIdleCallback(callback, { timeout: timeoutMs });
       return;
     }
-    await Promise.all([
-      saveStats(stats),
-      saveMatchedAccounts(matchedAccounts),
-      saveCollectedAvatars(collectedAvatars),
-    ]);
-  }, 250);
-}
+    callback();
+  }, delayMs);
 
-function mergeUniqueStrings(
-  existing: string[] | undefined,
-  incoming: string | null,
-  normalizeHandles: boolean,
-): string[] {
-  const values = new Set(existing ?? []);
-  const normalized = incoming
-    ? (normalizeHandles ? normalizeHandle(incoming) : incoming.trim())
-    : "";
-  if (normalized) {
-    values.add(normalized);
-  }
-  return Array.from(values).sort((left, right) => left.localeCompare(right));
+  return () => {
+    window.clearTimeout(delayHandle);
+    if (idleHandle !== null) {
+      idleWindow.cancelIdleCallback?.(idleHandle);
+    }
+  };
 }
 
 function formatProbabilityDebugLabel(score: number, threshold: number): string {

@@ -1,13 +1,14 @@
 {
   "name": "milady-shrinkifier",
-  "version": "0.11.1",
+  "version": "0.12.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "pnpm run build:app && pnpm run build:worker && pnpm run build:content",
+    "build": "pnpm run build:app && pnpm run build:worker && pnpm run build:background && pnpm run build:content",
     "build:app": "vite build",
     "build:review": "vite build --config vite.review.config.ts",
     "build:worker": "esbuild src/worker.ts --bundle --format=iife --platform=browser --target=es2022 --sourcemap --outfile=dist/worker.js",
+    "build:background": "esbuild src/background.ts --bundle --format=iife --platform=browser --target=es2022 --sourcemap --outfile=dist/background.js",
     "build:content": "esbuild src/content.ts --bundle --format=iife --platform=browser --target=es2022 --sourcemap --outfile=dist/content.js",
     "dev": "vite build --watch",
     "debug:chrome:attach": "node scripts/attach-debug-chrome.mjs",
