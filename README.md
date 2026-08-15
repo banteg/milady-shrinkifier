@@ -1,3 +1,5 @@
+
+
 # Milady Shrinkifier
 
 *protecting your timeline from the egregore since 2026*
@@ -17,7 +19,7 @@ A bundled ONNX classifier scans avatars as you scroll. When it spots a match, yo
 - **Hide** — collapsed behind a click-to-reveal row.
 - **Fade** — visible but at half opacity.
 - **Debug** — borders and confidence scores on every post.
-- **Off** — does nothing.
+- **Off** — does nothing (default).
 
 The popup tracks session stats (posts scanned, match rate, last sighting), keeps a list of detected accounts you can exempt individually, and collects avatar data you can export for offline labeling.
 
